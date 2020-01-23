@@ -112,7 +112,8 @@ class MultiheadAttention(torch.nn.Module):
             q=q, k=k, v=v,
             bsz=bsz, embed_dim=embed_dim, src_len=src_len, tgt_len=tgt_len,
             need_weights=need_weights,
-            key_padding_mask=key_padding_mask, attn_mask=attn_mask
+            key_padding_mask=key_padding_mask,
+            attn_mask=attn_mask
         )
 
     def forward_self_attn(
@@ -147,7 +148,8 @@ class MultiheadAttention(torch.nn.Module):
             q=q, k=k, v=v,
             bsz=bsz, embed_dim=embed_dim, src_len=src_len, tgt_len=tgt_len,
             need_weights=need_weights,
-            key_padding_mask=key_padding_mask, attn_mask=attn_mask
+            key_padding_mask=key_padding_mask,
+            attn_mask=attn_mask
         )
 
     forward = forward_self_attn

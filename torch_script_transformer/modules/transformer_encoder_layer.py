@@ -54,10 +54,11 @@ class TransformerEncoderLayer(torch.nn.Module):
         if self.normalize_before:
             x = self.final_layer_norm(x)
         x = torch.nn.functional.relu(self.fc1(x))
-        x = torch.nn.dropout(
+        x = torch.nn.functional.dropout(
             x, p=self.activation_dropout, training=self.training)
         x = self.fc2(x)
-        x = torch.nn.dropout(x, p=self.dropout, training=self.training)
+        x = torch.nn.functional.dropout(
+            x, p=self.dropout, training=self.training)
         x = residual2 + x
         if not self.normalize_before:
             x = self.final_layer_norm(x)
