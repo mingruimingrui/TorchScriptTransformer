@@ -3,10 +3,12 @@ https://github.com/pytorch/fairseq/blob/master/fairseq/modules/multihead_attenti
 """
 
 import torch
+from torch import Tensor
+from typing import Optional, Tuple
 
 
 class MultiheadAttention(torch.nn.Module):
-    """ Multi-head attention with incremental decoding """
+    """ Custom made Multi-head Attention for torch script transformer """
 
     def __init__(self, embed_dim, num_heads, dropout=0., bias=True):
         super().__init__()
@@ -28,62 +30,23 @@ class MultiheadAttention(torch.nn.Module):
 
         self.reset_parameters()
 
-    def register_parameter(self):
+    def reset_parameters(self):
         torch.nn.init.xavier_normal_(self.in_proj_weight)
         torch.nn.init.xavier_normal_(self.out_proj.weight)
         if self.in_proj_bias is not None:
             torch.nn.init.constant_(self.in_proj_bias, 0.)
             torch.nn.init.constant_(self.out_proj.bias, 0.)
 
-    def forward(
-        self, query, key, value,
-        key_padding_mask=None, attn_mask=None,
-        need_weights=True, saved_state=None, static_kv=False
+    def _forward_qkv(
+        self, q, k, v,
+        bsz, embed_dim, src_len, tgt_len,
+        need_weights, attn_mask, key_padding_mask
     ):
-        """ Input shape: Time x Batch x Channel """
-        qkv_same = query.data_ptr() == key.data_ptr() == value.data_ptr()
-        kv_same = key.data_ptr() == value.data_ptr()
-
-        tgt_len, bsz, embed_dim = query.size()
-
-        if qkv_same:
-            q, k, v = self.in_proj_qkv(query)
-
-        elif kv_same:
-            q = self.in_proj_q(query)
-            if saved_state is None or not static_kv:
-                k, v = self.in_proj_kv(key)
-
-        else:
-            q = self.in_proj_q(query)
-            k = self.in_proj_k(key)
-            v = self.in_proj_v(value)
-
-        q *= self.scaling
-        q = q.contiguous().view(
-            tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
-
-        if not (kv_same and saved_state is not None and static_kv):
-            k = k.contiguous().view(
-                -1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
-            v = v.contiguous().view(
-                -1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
-
-        if saved_state:
-            prev_key, prev_value = saved_state
-            if static_kv:
-                k = prev_key
-                v = prev_value
-            else:
-                k = torch.cat((prev_key, k), dim=1)
-                v = torch.cat((prev_value, v), dim=1)
-
+        # type: (Tensor, Tensor, Tensor, int, int, int, int, Optional[bool], Optional[Tensor], Optional[Tensor]) -> Tuple[Tensor, Optional[Tensor], Tuple[Tensor, Tensor]]
         saved_state = (
             k.view(bsz, self.num_heads, -1, self.head_dim),
             v.view(bsz, self.num_heads, -1, self.head_dim)
         )
-
-        src_len = k.size(1)
 
         attn_weights = torch.bmm(q, k.transpose(1, 2))
 
@@ -110,33 +73,107 @@ class MultiheadAttention(torch.nn.Module):
         attn = attn.transpose(0, 1).contiguous().view(tgt_len, bsz, embed_dim)
         attn = self.out_proj(attn)
 
+        if need_weights is None:
+            need_weights = False
         if need_weights:
-            attn_weights = attn_weights.view(
+            attn_weights_ = attn_weights.view(
                 bsz, self.num_heads, tgt_len, src_len)
-            attn_weights = attn_weights.sum(dim=1) / self.num_heads
+            attn_weights_ = attn_weights_.sum(dim=1) / self.num_heads
         else:
-            attn_weights = None
+            attn_weights_ = None
 
-        return attn, attn_weights, saved_state
+        return attn, attn_weights_, saved_state
+
+    def forward_encoder_attn(
+        self, x, encoder_out, need_weights,
+        attn_mask, key_padding_mask,
+        saved_state
+    ):
+        # type: (Tensor, Tensor, Optional[bool], Optional[Tensor], Optional[Tensor], Optional[Tuple[Tensor, Tensor]]) -> Tuple[Tensor, Optional[Tensor], Tuple[Tensor, Tensor]]
+
+        tgt_len, bsz, embed_dim = x.size()
+
+        q = self.in_proj_q(x)
+        if saved_state is None:
+            k, v = self.in_proj_kv(encoder_out)
+            k = k.contiguous().view(
+                -1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
+            v = v.contiguous().view(
+                -1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
+
+        else:
+            k, v = saved_state
+            k = k.view(bsz * self.num_heads, -1, self.head_dim)
+            v = v.view(bsz * self.num_heads, -1, self.head_dim)
+
+        src_len = k.size(1)
+
+        return self._forward_qkv(
+            q, k, v,
+            bsz, embed_dim, src_len, tgt_len,
+            need_weights, attn_mask, key_padding_mask
+        )
+
+    def forward_self_attn(
+        self, x, need_weights,
+        attn_mask, key_padding_mask,
+        saved_state
+    ):
+        # type: (Tensor, Optional[bool], Optional[Tensor], Optional[Tensor], Optional[Tuple[Tensor, Tensor]]) -> Tuple[Tensor, Optional[Tensor], Tuple[Tensor, Tensor]]
+
+        tgt_len, bsz, embed_dim = x.size()
+        q, k, v = self.in_proj_qkv(x)
+
+        q *= self.scaling
+        q = q.contiguous().view(
+            tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
+        k = k.contiguous().view(
+            -1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
+        v = v.contiguous().view(
+            -1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
+
+        if saved_state is not None:
+            prev_key, prev_value = saved_state
+            prev_key = prev_key.view(bsz * self.num_heads, -1, self.head_dim)
+            prev_value = prev_value.view(
+                bsz * self.num_heads, -1, self.head_dim)
+            k = torch.cat((prev_key, k), dim=1)
+            v = torch.cat((prev_value, v), dim=1)
+
+        src_len = k.size(1)
+
+        return self._forward_qkv(
+            q, k, v,
+            bsz, embed_dim, src_len, tgt_len,
+            need_weights, attn_mask, key_padding_mask
+        )
+
+    forward = forward_self_attn
 
     def in_proj_qkv(self, query):
-        return self._in_proj(query).chunk(3, dim=-1)
+        return self._in_proj(query, 0, 3 * self.embed_dim).chunk(3, dim=-1)
 
     def in_proj_kv(self, key):
-        return self._in_proj(key, start=self.embed_dim).chunk(2, dim=-1)
+        return self._in_proj(
+            key,
+            self.embed_dim,
+            3 * self.embed_dim
+        ).chunk(2, dim=-1)
 
     def in_proj_q(self, query):
-        return self._in_proj(query, end=self.embed_dim)
+        return self._in_proj(query, 0, self.embed_dim)
 
     def in_proj_k(self, key):
-        return self._in_proj(key, start=self.embed_dim, end=2 * self.embed_dim)
+        return self._in_proj(key, self.embed_dim, 2 * self.embed_dim)
 
     def in_proj_v(self, value):
-        return self._in_proj(value, start=2 * self.embed_dim)
+        return self._in_proj(value, 2 * self.embed_dim, 3 * self.embed_dim)
 
-    def _in_proj(self, input, start=0, end=None):
+    def _in_proj(self, input, start, end):
+        # type: (Tensor, int, int) -> Tensor
         weight = self.in_proj_weight
         bias = self.in_proj_bias
+        # weight = weight.narrow(0, start, end)
         weight = weight[start:end, :]
         if bias is not None:
             bias = bias[start:end]
