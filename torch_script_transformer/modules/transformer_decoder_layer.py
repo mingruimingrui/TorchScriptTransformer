@@ -17,6 +17,7 @@ class TransformerDecoderLayer(torch.nn.Module):
         dropout=0., activation_dropout=0., attention_dropout=0.,
         normalize_before=False
     ):
+        super().__init__()
         self.embed_dim = embed_dim
         self.self_attn = MultiheadAttention(
             embed_dim=self.embed_dim,
@@ -41,14 +42,14 @@ class TransformerDecoderLayer(torch.nn.Module):
         self.final_layer_norm = torch.nn.LayerNorm(self.embed_dim)
 
     def forward(
-        self, x, encoder_out, saved_state,
-        encoder_padding_mask, self_attn_padding_mask, self_attn_mask,
-        need_attn
+        self, x, encoder_out, encoder_padding_mask,
+        self_attn_padding_mask, self_attn_mask,
+        saved_state, need_attn
     ):
-        # type: (Tensor, Tensor, Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]], Tensor, Optional[Tensor], Optional[Tensor], Optional[bool]) -> Tuple(Tensor, Optional[Tensor], Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]])
-        self_attn_saved_state: Optional[Tuple[Tensor, Tensor]]
-        encoder_attn_saved_state: Optional[Tuple[Tensor, Tensor]]
+        # type: (Tensor, Tensor, Tensor, Optional[Tensor], Optional[Tensor], Optional[Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]], Optional[bool]) -> Tuple[Tensor, Optional[Tensor], Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]]
 
+        # self_attn_saved_state: Optional[Tuple[Tensor, Tensor]]
+        # encoder_attn_saved_state: Optional[Tuple[Tensor, Tensor]]
         if saved_state is None:
             self_attn_saved_state = None
             encoder_attn_saved_state = None
