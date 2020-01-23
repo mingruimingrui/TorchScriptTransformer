@@ -1,7 +1,6 @@
 # -*- coding: utf-8 -*-
 
-"""
-Adapted from
+""" Adapted from
 https://github.com/pytorch/fairseq/blob/master/fairseq/data/dictionary.py
 """
 

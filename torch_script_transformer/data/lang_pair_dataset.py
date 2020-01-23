@@ -1,3 +1,8 @@
+""" Not a torch.utils.data.Dataset.
+A generator is used instead to avoid loading entire corpus
+into memory all at once.
+"""
+
 from __future__ import unicode_literals
 
 import os
