@@ -40,9 +40,9 @@ class MultiheadAttention(torch.nn.Module):
     def _forward_qkv(
         self, q, k, v,
         bsz, embed_dim, src_len, tgt_len,
-        need_weights, attn_mask, key_padding_mask
+        key_padding_mask, attn_mask, need_weights
     ):
-        # type: (Tensor, Tensor, Tensor, int, int, int, int, Optional[bool], Optional[Tensor], Optional[Tensor]) -> Tuple[Tensor, Optional[Tensor], Tuple[Tensor, Tensor]]
+        # type: (Tensor, Tensor, Tensor, int, int, int, int, Optional[Tensor], Optional[Tensor], Optional[bool]) -> Tuple[Tensor, Optional[Tensor], Tuple[Tensor, Tensor]]
         saved_state = (
             k.view(bsz, self.num_heads, -1, self.head_dim),
             v.view(bsz, self.num_heads, -1, self.head_dim)
@@ -85,11 +85,11 @@ class MultiheadAttention(torch.nn.Module):
         return attn, attn_weights_, saved_state
 
     def forward_encoder_attn(
-        self, x, encoder_out, need_weights,
-        attn_mask, key_padding_mask,
-        saved_state
+        self, x, encoder_out,
+        key_padding_mask, attn_mask,
+        saved_state, need_weights
     ):
-        # type: (Tensor, Tensor, Optional[bool], Optional[Tensor], Optional[Tensor], Optional[Tuple[Tensor, Tensor]]) -> Tuple[Tensor, Optional[Tensor], Tuple[Tensor, Tensor]]
+        # type: (Tensor, Tensor, Optional[Tensor], Optional[Tensor], Optional[Tuple[Tensor, Tensor]], Optional[bool]) -> Tuple[Tensor, Optional[Tensor], Tuple[Tensor, Tensor]]
 
         tgt_len, bsz, embed_dim = x.size()
 
@@ -109,17 +109,18 @@ class MultiheadAttention(torch.nn.Module):
         src_len = k.size(1)
 
         return self._forward_qkv(
-            q, k, v,
-            bsz, embed_dim, src_len, tgt_len,
-            need_weights, attn_mask, key_padding_mask
+            q=q, k=k, v=v,
+            bsz=bsz, embed_dim=embed_dim, src_len=src_len, tgt_len=tgt_len,
+            need_weights=need_weights,
+            key_padding_mask=key_padding_mask, attn_mask=attn_mask
         )
 
     def forward_self_attn(
-        self, x, need_weights,
-        attn_mask, key_padding_mask,
-        saved_state
+        self, x,
+        key_padding_mask, attn_mask,
+        saved_state, need_weights
     ):
-        # type: (Tensor, Optional[bool], Optional[Tensor], Optional[Tensor], Optional[Tuple[Tensor, Tensor]]) -> Tuple[Tensor, Optional[Tensor], Tuple[Tensor, Tensor]]
+        # type: (Tensor, Optional[Tensor], Optional[Tensor], Optional[Tuple[Tensor, Tensor]], Optional[bool]) -> Tuple[Tensor, Optional[Tensor], Tuple[Tensor, Tensor]]
 
         tgt_len, bsz, embed_dim = x.size()
         q, k, v = self.in_proj_qkv(x)
@@ -143,9 +144,10 @@ class MultiheadAttention(torch.nn.Module):
         src_len = k.size(1)
 
         return self._forward_qkv(
-            q, k, v,
-            bsz, embed_dim, src_len, tgt_len,
-            need_weights, attn_mask, key_padding_mask
+            q=q, k=k, v=v,
+            bsz=bsz, embed_dim=embed_dim, src_len=src_len, tgt_len=tgt_len,
+            need_weights=need_weights,
+            key_padding_mask=key_padding_mask, attn_mask=attn_mask
         )
 
     forward = forward_self_attn
