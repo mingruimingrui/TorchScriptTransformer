@@ -78,6 +78,7 @@ class TransformerModel(torch.nn.Module):
             '--activation_dropout', type=float, metavar='D',
             help='dropout probability after activation in FFN.')
 
+    @torch.jit.unused
     @classmethod
     def build_model(cls, args, src_dict, tgt_dict):
         if args is None:
@@ -102,23 +103,39 @@ class TransformerModel(torch.nn.Module):
             args.share_decoder_input_output_embed = True
 
         else:
-            decoder_embed_tokens = build_embedding(src_dict, args.embed_dim)
+            decoder_embed_tokens = build_embedding(tgt_dict, args.embed_dim)
 
         encoder = TransformerEncoder(args, src_dict, encoder_embed_tokens)
         decoder = TransformerDecoder(args, tgt_dict, decoder_embed_tokens)
         return cls(args, encoder, decoder)
 
-    def forward(self, src_tokens, src_lengths, prev_output_tokens, **kwargs):
-        raise NotImplementedError()
-        # encoder_out = self.encoder(
-        #     src_tokens, src_lengths=src_lengths, **kwargs)
-        # decoder_out = self.decoder(
-        #     prev_output_tokens, encoder_out=encoder_out, **kwargs)
-        # return decoder_out
+    def forward(self, src_tokens, src_lengths, prev_output_tokens):
+        # type: (Tensor, Tensor, Tensor) -> Tuple[Tensor, Optional[Tensor]]
 
-    def forward_encoder(self):
-        raise NotImplementedError()
+        encoder_out, encoder_padding_mask = self.forward_encoder(
+            src_tokens=src_tokens,
+            src_lengths=src_lengths
+        )
+        logits, attn, new_incremental_state = self.decoder(
+            prev_output_tokens=prev_output_tokens,
+            encoder_out=encoder_out,
+            encoder_padding_mask=encoder_padding_mask,
+            incremental_state=None,
+            need_attn=False
+        )
 
+        return logits, attn
+
+    @torch.jit.export
+    def forward_encoder(self, src_tokens, src_lengths):
+        # type: (Tensor, Tensor) -> Tuple[Tensor, Optional[Tensor]]
+        encoder_out, encoder_padding_mask = self.encoder(
+            src_tokens=src_tokens,
+            src_lengths=src_lengths
+        )
+        return encoder_out, encoder_padding_mask
+
+    @torch.jit.unused
     def forward_decoder(self):
         raise NotImplementedError()
 
@@ -157,13 +174,11 @@ class TransformerEncoder(torch.nn.Module):
             for _ in range(args.encoder_layers)
         ])
 
-        if args.normalize_before:
-            self.layer_norm = torch.nn.LayerNorm(args.embed_dim)
-        else:
-            self.layer_norm = None
+        self.normalize_before = args.normalize_before
+        self.layer_norm = torch.nn.LayerNorm(args.embed_dim)
 
     def forward(self, src_tokens, src_lengths):
-        # type: (Tensor, Tensor) -> Tuple[Tensor, Tensor]
+        # type: (Tensor, Tensor) -> Tuple[Tensor, Optional[Tensor]]
 
         # Look up embeddings
         x = self.embed_scale * self.embed_tokens(src_tokens)
@@ -175,16 +190,18 @@ class TransformerEncoder(torch.nn.Module):
         x = x.transpose(0, 1)
 
         # Compute padding mask
-        encoder_padding_mask = src_tokens.eq(self.padding_idx)
-        if not encoder_padding_mask.any():
+        encoder_padding_mask_ = src_tokens.eq(self.padding_idx)
+        if encoder_padding_mask_.any():
+            encoder_padding_mask = encoder_padding_mask_
+        else:
             encoder_padding_mask = None
 
         # encoder layers
         for layer in self.layers:
             x = layer(x, encoder_padding_mask, None)
 
-        if self.layer_norm:
-            x = self.layer_norm(x)
+        if self.normalize_before:
+            x = self.layer_norm(x).type_as(x)
 
         return x, encoder_padding_mask
 
@@ -194,11 +211,12 @@ class TransformerEncoder(torch.nn.Module):
         encoder_padding_mask,
         new_order
     ):
-        # type: (Tensor, Tensor, Tensor) -> Tuple[Tensor, Tensor]
-        return (
-            encoder_out.index_select(1, new_order),
-            encoder_padding_mask.index_select(0, new_order)
-        )
+        # type: (Tensor, Optional[Tensor], Tensor) -> Tuple[Tensor, Optional[Tensor]]
+        encoder_out = encoder_out.index_select(1, new_order)
+        if encoder_padding_mask is not None:
+            encoder_padding_mask = encoder_padding_mask.index_select(0, new_order)
+
+        return encoder_out, encoder_padding_mask
 
 
 class TransformerDecoder(torch.nn.Module):
@@ -224,15 +242,16 @@ class TransformerDecoder(torch.nn.Module):
             learned=args.learned_pos
         )
 
-        self.proj_in_dim = None
-        self.proj_out_dim = None
-        if embed_dim != token_embed_dim:
-            self.proj_in_dim = Linear(token_embed_dim, embed_dim, bias=False)
-            self.proj_out_dim = Linear(embed_dim, token_embed_dim, bias=False)
+        # self.proj_in_dim = None
+        # self.proj_out_dim = None
+        # if embed_dim != token_embed_dim:
+        #     self.proj_in_dim = Linear(token_embed_dim, embed_dim, bias=False)
+        #     self.proj_out_dim = Linear(embed_dim, token_embed_dim, bias=False)
 
+        self.num_layers = args.decoder_layers
         self.layers = torch.nn.ModuleList([
             TransformerDecoderLayer(
-                embed_dim=self.embed_dim,
+                embed_dim=embed_dim,
                 num_heads=args.num_attention_heads,
                 ffn_embed_dim=args.ffn_embed_dim,
                 dropout=args.dropout,
@@ -248,10 +267,8 @@ class TransformerDecoder(torch.nn.Module):
                 torch.Tensor(len(dictionary), token_embed_dim))
             torch.nn.init.xavier_normal_(self.embed_out)
 
-        if args.normalize_before:
-            self.layer_norm = torch.nn.LayerNorm(embed_dim)
-        else:
-            self.layer_norm = None
+        self.normalize_before = args.normalize_before
+        self.layer_norm = torch.nn.LayerNorm(embed_dim)
 
         self.register_buffer(
             'future_mask',
@@ -275,8 +292,8 @@ class TransformerDecoder(torch.nn.Module):
 
         # Look up embeddings
         x = self.embed_scale * self.embed_tokens(prev_output_tokens)
-        if self.proj_in_dim is not None:
-            x = self.proj_in_dim(x)
+        # if self.proj_in_dim is not None:
+        #     x = self.proj_in_dim(x)
         x = x + self.embed_positions(prev_output_tokens.size(1), start)
         x = torch.nn.functional.dropout(
             x, p=self.dropout, training=self.training)
@@ -284,22 +301,27 @@ class TransformerDecoder(torch.nn.Module):
         # BTC -> TBC
         x = x.transpose(0, 1)
 
-        self_attn_padding_mask = prev_output_tokens.eq(self.padding_idx)
-
         # Compute padding mask
-        self_attn_padding_mask = prev_output_tokens.eq(self.padding_idx)
-        if not self_attn_padding_mask.any():
+        self_attn_padding_mask_ = prev_output_tokens.eq(self.padding_idx)
+        if self_attn_padding_mask_.any():
+            self_attn_padding_mask = self_attn_padding_mask_
+        else:
             self_attn_padding_mask = None
 
         # Decoder layers
-        new_incremental_state = []
-        for idx, layer in enumerate(self.layers):
-            saved_state = None
-            self_attn_mask = None
+        new_incremental_state = torch.jit.annotate(List[Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]], [])
+        idx = 0  # We can't use enumerate
+        attn = torch.jit.annotate(Optional[Tensor], None)
+        for layer in self.layers:
+            # layer = self.layers[idx]
+            # saved_state = None
+            # self_attn_mask = None
             if incremental_state is not None:
                 saved_state = incremental_state[idx]
+                self_attn_mask = None
             else:
                 self_attn_mask = self.buffered_future_mask(x)
+                saved_state = None
 
             x, attn, new_saved_state = layer(
                 x,
@@ -311,18 +333,16 @@ class TransformerDecoder(torch.nn.Module):
                 need_attn=need_attn
             )
             new_incremental_state.append(new_saved_state)
+            idx += 1
 
-        if attn is not None:
-            attn.float()
-
-        if self.layer_norm:
-            x = self.layer_norm
+        if self.normalize_before:
+            x = self.layer_norm(x).type_as(x)
 
         # TBC -> BTC
         x = x.transpose(0, 1)
 
-        if self.proj_out_dim:
-            x = self.proj_out_dim(x)
+        # if self.proj_out_dim:
+        #     x = self.proj_out_dim(x)
 
         x = self.output_layer(x)
 

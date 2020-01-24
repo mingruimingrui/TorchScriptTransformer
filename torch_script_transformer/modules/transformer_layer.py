@@ -36,7 +36,7 @@ class TransformerEncoderLayer(torch.nn.Module):
         # type: (Tensor, Optional[Tensor], Optional[Tensor]) -> Tensor
         residual = x
         if self.normalize_before:
-            x = self.self_attn_layer_norm(x)
+            x = self.self_attn_layer_norm(x).type_as(x)
         x, _, _ = self.self_attn.forward_self_attn(
             x,
             need_weights=False,
@@ -48,11 +48,11 @@ class TransformerEncoderLayer(torch.nn.Module):
             x, p=self.dropout, training=self.training)
         x = residual + x
         if not self.normalize_before:
-            x = self.self_attn_layer_norm(x)
+            x = self.self_attn_layer_norm(x).type_as(x)
 
         residual2 = x
         if self.normalize_before:
-            x = self.final_layer_norm(x)
+            x = self.final_layer_norm(x).type_as(x)
         x = torch.nn.functional.relu(self.fc1(x))
         x = torch.nn.functional.dropout(
             x, p=self.activation_dropout, training=self.training)
@@ -61,7 +61,7 @@ class TransformerEncoderLayer(torch.nn.Module):
             x, p=self.dropout, training=self.training)
         x = residual2 + x
         if not self.normalize_before:
-            x = self.final_layer_norm(x)
+            x = self.final_layer_norm(x).type_as(x)
 
         return x
 
@@ -117,7 +117,7 @@ class TransformerDecoderLayer(torch.nn.Module):
 
         residual = x
         if self.normalize_before:
-            x = self.self_attn_layer_norm(x)
+            x = self.self_attn_layer_norm(x).type_as(x)
         x, _, self_attn_saved_state = self.self_attn.forward_self_attn(
             x,
             key_padding_mask=self_attn_padding_mask,
@@ -129,11 +129,11 @@ class TransformerDecoderLayer(torch.nn.Module):
             x, p=self.dropout, training=self.training)
         x = residual + x
         if not self.normalize_before:
-            x = self.self_attn_layer_norm(x)
+            x = self.self_attn_layer_norm(x).type_as(x)
 
         residual2 = x
         if self.normalize_before:
-            x = self.encoder_attn_layer_norm(x)
+            x = self.encoder_attn_layer_norm(x).type_as(x)
         x, attn, encoder_attn_saved_state = \
             self.encoder_attn.forward_encoder_attn(
                 x,
@@ -147,11 +147,11 @@ class TransformerDecoderLayer(torch.nn.Module):
             x, p=self.dropout, training=self.training)
         x = residual2 + x
         if not self.normalize_before:
-            x = self.encoder_attn_layer_norm(x)
+            x = self.encoder_attn_layer_norm(x).type_as(x)
 
         residual3 = x
         if self.normalize_before:
-            x = self.final_layer_norm(x)
+            x = self.final_layer_norm(x).type_as(x)
         x = torch.nn.functional.relu(self.fc1(x))
         x = torch.nn.functional.dropout(
             x, p=self.activation_dropout, training=self.training)
@@ -160,7 +160,7 @@ class TransformerDecoderLayer(torch.nn.Module):
             x, p=self.dropout, training=self.training)
         x = residual3 + x
         if not self.normalize_before:
-            x = self.final_layer_norm(x)
+            x = self.final_layer_norm(x).type_as(x)
 
         return x, attn, (self_attn_saved_state, encoder_attn_saved_state)
 
