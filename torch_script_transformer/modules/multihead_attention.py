@@ -94,6 +94,8 @@ class MultiheadAttention(torch.nn.Module):
         tgt_len, bsz, embed_dim = x.size()
 
         q = self.in_proj_q(x)
+        q = q.contiguous().view(
+            tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
         if saved_state is None:
             k, v = self.in_proj_kv(encoder_out)
             k = k.contiguous().view(
