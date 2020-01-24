@@ -6,7 +6,7 @@ https://github.com/pytorch/fairseq/tree/master/fairseq/modules/sinusoidal_positi
 
 import math
 import torch
-from collections import Optional
+from typing import Optional
 
 
 class LearnedPositionalEmbedding(torch.nn.Embedding):
@@ -15,7 +15,7 @@ class LearnedPositionalEmbedding(torch.nn.Embedding):
         super().__init__(num_embeddings, embedding_dim)
 
     def forward(self, seq_len, start):
-        # type: int, Optional[int]
+        # type: (int, Optional[int]) -> Tensor
         if start is None:
             start = 0
         return self.weight.narrow(0, start, seq_len)
@@ -27,14 +27,14 @@ class SinusoidalPositionalEmbedding(torch.nn.Module):
         super().__init__()
 
         self.embedding_dim = embedding_dim
-        self.register_buffer('weights', make_sinusoidal_embeddings(
+        self.register_buffer('weight', make_sinusoidal_embeddings(
             num_embeddings, embedding_dim))
 
     def forward(self, seq_len, start):
-        # type: int, Optional[int]
+        # type: (int, Optional[int]) -> Tensor
         if start is None:
             start = 0
-        return self.weights.narrow(0, start, seq_len).detach()
+        return self.weight.narrow(0, start, seq_len).detach()
 
 
 def PositionalEmbedding(
