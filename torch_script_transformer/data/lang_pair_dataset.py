@@ -42,18 +42,6 @@ def _worker_loop(
     tgt_prepend_bos, tgt_append_eos,
     src_pad_left, tgt_pad_left
 ):
-    def process_line(line, bpe_model, d):
-        p_line = bpe_model.process_line(
-            line,
-            dropout=bpe_dropout
-        )
-        token_ids = d.encode_line(
-            p_line,
-            prepend_bos=src_prepend_bos,
-            append_eos=src_append_eos
-        )
-        return token_ids
-
     def form_batches(list_token_ids):
         all_batches = []
         src_batch = []
@@ -98,8 +86,14 @@ def _worker_loop(
         # Form chunk into token ids
         chunk_token_ids = []
         for src_line, tgt_line in chunk:
-            src_token_ids = process_line(src_line, src_bpe_model, src_dict)
-            tgt_token_ids = process_line(tgt_line, tgt_bpe_model, tgt_dict)
+            src_token_ids = src_bpe_model.process_line(src_line, bpe_dropout)
+            src_token_ids = src_dict.encode_line(
+                src_token_ids, src_prepend_bos, src_append_eos)
+
+            tgt_token_ids = tgt_bpe_model.process_line(tgt_line, bpe_dropout)
+            tgt_token_ids = tgt_dict.encode_line(
+                tgt_token_ids, tgt_prepend_bos, tgt_append_eos)
+
             if len(src_token_ids) > src_max_pos:
                 continue
             if len(tgt_token_ids) > tgt_max_pos:
