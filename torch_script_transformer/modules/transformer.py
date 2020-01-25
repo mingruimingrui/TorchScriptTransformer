@@ -53,9 +53,9 @@ class TransformerModel(torch.nn.Module):
         add_argument(
             '--learned_pos', action='store_true',
             help='use learned positional embeddings')
-        add_argument(
-            '--share_decoder_input_output_embed', action='store_true',
-            help='share decoder input and output embeddings')
+        # add_argument(
+        #     '--share_decoder_input_output_embed', action='store_true',
+        #     help='share decoder input and output embeddings')
         add_argument(
             '--share_all_embeddings', action='store_true',
             help='share encoder, decoder and output embeddings'
@@ -100,7 +100,7 @@ class TransformerModel(torch.nn.Module):
                 msg = '--share-all-embeddings requires a joined dictionary'
                 raise ValueError(msg)
             decoder_embed_tokens = encoder_embed_tokens
-            args.share_decoder_input_output_embed = True
+            # args.share_decoder_input_output_embed = True
 
         else:
             decoder_embed_tokens = build_embedding(tgt_dict, args.embed_dim)
@@ -232,7 +232,7 @@ class TransformerDecoder(torch.nn.Module):
         self.dropout = args.dropout
         self.padding_idx = embed_tokens.padding_idx
         self.max_target_positions = args.max_target_positions
-        self.share_input_output_embed = args.share_decoder_input_output_embed
+        # self.share_input_output_embed = args.share_decoder_input_output_embed
 
         self.embed_scale = math.sqrt(embed_dim)
         self.embed_tokens = embed_tokens
@@ -262,10 +262,10 @@ class TransformerDecoder(torch.nn.Module):
             for _ in range(args.decoder_layers)
         ])
 
-        if not self.share_input_output_embed:
-            self.embed_out = torch.nn.Parameter(
-                torch.Tensor(len(dictionary), token_embed_dim))
-            torch.nn.init.xavier_normal_(self.embed_out)
+        # if not self.share_input_output_embed:
+        #     self.embed_out = torch.nn.Parameter(
+        #         torch.Tensor(len(dictionary), token_embed_dim))
+        #     torch.nn.init.xavier_normal_(self.embed_out)
 
         self.normalize_before = args.normalize_before
         self.layer_norm = torch.nn.LayerNorm(embed_dim)
@@ -355,10 +355,11 @@ class TransformerDecoder(torch.nn.Module):
 
     def output_layer(self, x):
         # type: (Tensor) -> Tensor
-        if self.share_input_output_embed:
-            return torch.nn.functional.linear(x, self.embed_tokens.weight)
-        else:
-            return torch.nn.functional.linear(x, self.embed_out)
+        # if self.share_input_output_embed:
+        #     return torch.nn.functional.linear(x, self.embed_tokens.weight)
+        # else:
+        #     return torch.nn.functional.linear(x, self.embed_out)
+        return torch.nn.functional.linear(x, self.embed_tokens.weight)
 
 
 def Embedding(num_embeddings, embedding_dim, padding_idx):
@@ -392,8 +393,8 @@ def base_architecture(args):
     args.normalize_before = getattr(args, 'normalize_before', False)
 
     args.learned_pos = getattr(args, 'learned_pos', False)
-    args.share_decoder_input_output_embed = \
-        getattr(args, 'share_decoder_input_output_embed', False)
+    # args.share_decoder_input_output_embed = \
+    #     getattr(args, 'share_decoder_input_output_embed', False)
     args.share_all_embeddings = getattr(args, 'share_all_embeddings', False)
 
     args.max_source_positions = getattr(args, 'max_source_positions', 1024)
