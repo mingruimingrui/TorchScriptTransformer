@@ -18,7 +18,8 @@ class LearnedPositionalEmbedding(torch.nn.Embedding):
         # type: (int, Optional[int]) -> Tensor
         if start is None:
             start = 0
-        return self.weight.narrow(0, start, seq_len)
+        return self.weight[start:(start + seq_len)].detach()
+        # return self.weight.narrow(0, start, seq_len)
 
 
 class SinusoidalPositionalEmbedding(torch.nn.Module):
@@ -34,7 +35,8 @@ class SinusoidalPositionalEmbedding(torch.nn.Module):
         # type: (int, Optional[int]) -> Tensor
         if start is None:
             start = 0
-        return self.weight.narrow(0, start, seq_len).detach()
+        return self.weight[start:(start + seq_len)].detach()
+        # return self.weight.narrow(0, start, seq_len).detach()
 
 
 def PositionalEmbedding(
