@@ -90,6 +90,7 @@ class MultiheadAttention(torch.nn.Module):
         saved_state, need_weights
     ):
         # type: (Tensor, Tensor, Optional[Tensor], Optional[Tensor], Optional[Tuple[Tensor, Tensor]], Optional[bool]) -> Tuple[Tensor, Optional[Tensor], Tuple[Tensor, Tensor]]
+        """ Input format: TBC """
 
         tgt_len, bsz, embed_dim = x.size()
 
