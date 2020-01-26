@@ -431,14 +431,19 @@ def main(args):
         num_sents_elapsed = metrics['num_sents_elapsed']
         num_tokens_elapsed = metrics['num_tokens_elapsed']
 
-        if update_nb % args.valid_interval == 0:
+        if (
+            update_nb % args.valid_interval == 0 or
+            update_nb == 1 or
+            update_nb == args.max_update
+        ):
             validate(args, dataset, model, loss_fn, update_nb, valid_writer)
 
-        if update_nb % args.save_interval == 0:
+        if (
+            update_nb % args.save_interval == 0 or
+            update_nb == args.max_update
+        ):
             checkpoint_utils.save_model(model, args.checkpoint_dir, update_nb)
-
-    validate(args, dataset, model, loss_fn, update_nb, valid_writer)
-    checkpoint_utils.save_model(model, args.checkpoint_dir, update_nb)
+            checkpoint_utils.save_model(model, args.checkpoint_dir, 'latest')
 
     time_taken = time() - start_time()
     print('Training done in {:.1f}s'.format(time_taken))
