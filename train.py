@@ -365,7 +365,6 @@ def train_one_update(
     metrics = {
         'update_nb': update_nb,
         'loss': total_loss / total_num_batches,
-        'time_taken': time_taken,
         'bps': total_num_batches / time_taken,
         'sps': total_num_sents / time_taken,
         'wps': total_num_tokens / time_taken,
