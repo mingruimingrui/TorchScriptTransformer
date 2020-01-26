@@ -11,8 +11,10 @@ from typing import Optional
 
 class LearnedPositionalEmbedding(torch.nn.Embedding):
 
-    def __init__(self, num_embeddings, embedding_dim):
+    def __init__(self, num_embeddings, embedding_dim, padding_idx=None):
         super().__init__(num_embeddings, embedding_dim)
+        if padding_idx:
+            self.weight[padding_idx] = 0
 
     def forward(self, seq_len, start):
         # type: (int, Optional[int]) -> Tensor
@@ -24,12 +26,12 @@ class LearnedPositionalEmbedding(torch.nn.Embedding):
 
 class SinusoidalPositionalEmbedding(torch.nn.Module):
 
-    def __init__(self, num_embeddings, embedding_dim):
+    def __init__(self, num_embeddings, embedding_dim, padding_idx=None):
         super().__init__()
 
         self.embedding_dim = embedding_dim
         self.register_buffer('weight', make_sinusoidal_embeddings(
-            num_embeddings, embedding_dim))
+            num_embeddings, embedding_dim, padding_idx))
 
     def forward(self, seq_len, start):
         # type: (int, Optional[int]) -> Tensor
