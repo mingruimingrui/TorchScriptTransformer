@@ -2,11 +2,14 @@
 
 from __future__ import absolute_import, unicode_literals
 
+import os
 import re
 import sys
 import json
 import argparse
 from collections import Mapping, Iterable
+
+from tensorboardX import SummaryWriter
 
 from time import time
 from tqdm import tqdm
@@ -19,6 +22,7 @@ from torch_script_transformer.modules.transformer \
     import TransformerModel, base_architecture
 from torch_script_transformer.modules.smooth_cross_entropy \
     import SmoothCrossEntropyLoss
+from torch_script_transformer.optim.adam import Adam
 from torch_script_transformer.utils \
     import checkpoint_utils
 
@@ -136,7 +140,7 @@ def make_parser():
     return parser
 
 
-def parse_args(parser, argv=None):
+def add_arch_and_parse_args(parser, argv=None):
     default_args = argparse.Namespace()
     base_architecture(default_args)
 
@@ -216,20 +220,18 @@ def make_loss_fn(args, dataset):
     loss_fn = SmoothCrossEntropyLoss(
         len(dataset.tgt_dict),
         smoothing=args.label_smoothing,
-        reduction='sum'
+        reduction='mean'
     )
     return loss_fn
 
 
 def determine_lr(args, update_nb):
     if update_nb <= args.warmup_updates:
-        lr = args.lr / args.warmup_updates * (update_nb + 1)
+        lr = args.lr / args.warmup_updates * (update_nb)
         return max(lr, args.min_lr)
 
-    warmup_elapsed = update_nb - args.warmup_updates
-
     if args.lr_scheduler == 'inverse_sqrt':
-        lr = args.lr * warmup_elapsed ** -0.5
+        lr = args.lr * (args.warmup_updates / update_nb) ** 0.5
 
     return max(lr, args.min_lr)
 
@@ -242,12 +244,19 @@ def make_optimizer(args, model):
         match = adam_beta_pattern.match(args.adam_betas)
         adam_betas = (float(match.group(1)), float(match.group(2)))
 
-        optimizer = torch.optim.Adam(
+        optimizer = Adam(
             model.parameters(),
-            lr=determine_lr(args, 0),
+            lr=determine_lr(args, 1),
             betas=adam_betas,
-            weight_decay=args.weight_decay
+            weight_decay=args.weight_decay,
         )
+
+        # optimizer = torch.optim.Adam(
+        #     model.parameters(),
+        #     lr=determine_lr(args, 1),
+        #     betas=adam_betas,
+        #     weight_decay=args.weight_decay
+        # )
 
     else:
         raise ValueError(
@@ -256,193 +265,186 @@ def make_optimizer(args, model):
     return optimizer
 
 
-def compute_loss(model, loss_fn, batch, device, ignore_index):
-    batch = to_device(batch, device)
+def forward_loss(model, loss_fn, batch, device, ignore_idx):
     with torch.no_grad():
-        src_tokens, src_lengths, tgt_tokens, _ = batch
+        src_tokens = batch[0]
+        tgt_tokens = batch[2]
+        src_tokens = to_device(src_tokens, device)
+        tgt_tokens = to_device(tgt_tokens, device)
         prev_output_tokens = tgt_tokens[:, :-1]
         labels = tgt_tokens[:, 1:]
 
-        keep_pos = labels != ignore_index
+        keep_pos = labels != ignore_idx
         labels = labels[keep_pos]
 
-    logits, _ = model(src_tokens, src_lengths, prev_output_tokens)
+    logits, _ = model(src_tokens, prev_output_tokens, False)
     logits = logits[keep_pos]
 
     loss = loss_fn(logits, labels)
-
     return loss
 
 
-class Metric(object):
-
-    def __init__(self, decay_rate=0.99):
-        self.meters = {}
-        assert 0 <= decay_rate < 1
-        self.decay_rate = decay_rate
-        self.update_rate = 1 - decay_rate
-
-    def __repr__(self):
-        return json.dumps({
-            k: ('{:.2f}'.format(v) if isinstance(v, float) else v)
-            for k, v in self.meters.items()
-        })
-
-    @torch.no_grad()
-    def update(self, **kwargs):
-        for key, value in kwargs.items():
-            self.meters[key] = value
-
-    @torch.no_grad()
-    def update_with_decay(self, **kwargs):
-        for key, value in kwargs.items():
-            cur_value = self.meters.get(key, value)
-            new_value = cur_value * self.decay_rate + value * self.update_rate
-            self.meters[key] = new_value
-
-    def print_metric(self):
-        sys.stderr.write('\r')
-        sys.stderr.flush()
-        print(self)
+def ppdict(metrics):
+    print(json.dumps({
+        k: ('{:.3g}'.format(v) if isinstance(v, float) else v)
+        for k, v in metrics.items()
+    }))
 
 
 @torch.no_grad()
-def validate(args, dataset, model, loss_fn, update_nb=None):
+def validate(args, dataset, model, loss_fn, update_nb=None, writer=None):
     start_time = time()
     model.eval()
     device = get_device(args)
-    ignore_index = dataset.tgt_dict.pad_index
+    ignore_idx = dataset.tgt_dict.pad_index
 
     total_loss = 0
-    total_num_batchs = 0
+    total_num_batches = 0
     total_num_sents = 0
     total_num_tokens = 0
     for batch in make_batch_iterator(args, dataset, False):
         src_lengths = batch[1]
-        total_num_batchs += 1
+        total_num_batches += 1
         total_num_sents += len(src_lengths)
         total_num_tokens += int(src_lengths.sum())
 
-        loss = compute_loss(model, loss_fn, batch, device, ignore_index)
+        loss = forward_loss(model, loss_fn, batch, device, ignore_idx)
         total_loss += float(loss.item())
 
     time_taken = time() - start_time
-    metrics = Metric()
-    if update_nb is not None:
-        metrics.update(update_nb=update_nb)
-    metrics.update(
-        valid_loss=total_loss / total_num_tokens,
-        time_taken=time_taken,
-        bps=total_num_batchs / time_taken,
-        sps=total_num_sents / time_taken,
-        wps=total_num_tokens / time_taken
-    )
 
-    metrics.print_metric()
+    metrics = {
+        'update_nb': update_nb,
+        'valid_loss': total_loss / total_num_batches,
+        'time_taken': time_taken,
+        'bps': total_num_batches / time_taken,
+        'sps': total_num_sents / time_taken,
+        'wps': total_num_tokens / time_taken
+    }
+    sys.stderr.write('\r')
+    sys.stderr.flush()
+    ppdict(metrics)
+    if writer:
+        writer.add_scalar('valid_loss', metrics['valid_loss'], update_nb)
 
     return metrics
 
 
 def train_one_update(
-    args, batch_iterator, model,
-    loss_fn, optimizer,
-    update_nb, ignore_index, metrics
+    args, batch_iterator, ignore_idx, model,
+    loss_fn, optimizer, update_nb,
+    writer=None, cur_num_sents=None, cur_num_tokens=None,
+    verbose=False
 ):
+    start_time = time()
     model.train()
     device = get_device(args)
     optimizer.lr = determine_lr(args, update_nb)
-    optimizer.zero_grad()
 
-    update_start_time = time()
     total_loss = 0
-    total_num_batchs = 0
+    total_num_batches = 0
     total_num_sents = 0
     total_num_tokens = 0
 
+    optimizer.zero_grad()
     for _ in range(args.update_freq):
         batch = next(batch_iterator)
 
         src_lengths = batch[1]
-        total_num_batchs += 1
+        total_num_batches += 1
         total_num_sents += len(src_lengths)
         total_num_tokens += int(src_lengths.sum())
 
-        loss = compute_loss(model, loss_fn, batch, device, ignore_index)
+        loss = forward_loss(model, loss_fn, batch, device, ignore_idx)
         loss.backward()
-
         total_loss += float(loss.item())
-
     optimizer.step()
 
-    update_time_taken = time() - update_start_time
-    metrics.update_with_decay(
-        loss=total_loss / total_num_tokens,
-        bps=total_num_batchs / update_time_taken,
-        sps=total_num_sents / update_time_taken,
-        wps=total_num_tokens / update_time_taken
-    )
+    time_taken = time() - start_time
+
+    metrics = {
+        'update_nb': update_nb,
+        'loss': total_loss / total_num_batches,
+        'time_taken': time_taken,
+        'bps': total_num_batches / time_taken,
+        'sps': total_num_sents / time_taken,
+        'wps': total_num_tokens / time_taken,
+        'lr': float(optimizer.lr)
+    }
+    if cur_num_sents is not None:
+        metrics['num_sents_elapsed'] = cur_num_sents + total_num_sents
+    if cur_num_tokens is not None:
+        metrics['num_tokens_elapsed'] = cur_num_tokens + total_num_tokens
+    if verbose:
+        sys.stderr.write('\r')
+        sys.stderr.flush()
+        ppdict(metrics)
+
+    if writer:
+        writer.add_scalar('loss', metrics['loss'], update_nb)
+        writer.add_scalar('bps', metrics['bps'], update_nb)
+        writer.add_scalar('sps', metrics['sps'], update_nb)
+        writer.add_scalar('wps', metrics['wps'], update_nb)
+        writer.add_scalar('lr', metrics['lr'], update_nb)
+        if cur_num_sents:
+            writer.add_scalar(
+                'num_sents_elapsed', metrics['num_sents_elapsed'], update_nb)
+        if cur_num_sents:
+            writer.add_scalar(
+                'num_tokens_elapsed', metrics['num_tokens_elapsed'], update_nb)
+
+    return metrics
 
 
-def train(args, dataset, valid_dataset, model, loss_fn, optimizer):
+def main(args):
     start_time = time()
-    model_ = torch.jit.script(model)
-    model.train()
-    ignore_index = dataset.tgt_dict.pad_index
+    print(args)
+
+    print('Loading dataset')
+    dataset, valid_dataset = load_datasets(args)
+
+    print('Loading model')
+    model = load_model(args, dataset.src_dict, dataset.tgt_dict)
+
+    print('Making other training misc')
+    loss_fn = make_loss_fn(args, dataset)
+    optimizer = make_optimizer(args, model)
 
     batch_iterator = make_batch_iterator(args, dataset, True)
+    ignore_idx = dataset.tgt_dict.pad_index
+    num_sents_elapsed = 0
+    num_tokens_elapsed = 0
+
+    writer = SummaryWriter(os.path.join(args.checkpoint_dir, 'train'))
+    valid_writer = SummaryWriter(os.path.join(args.checkpoint_dir, 'valid'))
     pbar = tqdm(total=args.max_update, ncols=80)
-    metrics = Metric()
-    metrics.update(update_nb=0)
 
-    for update_nb in range(args.max_update):
+    for update_nb in range(1, args.max_update + 1):
         pbar.update(1)
-        train_one_update(
-            args, batch_iterator,
-            model, loss_fn, optimizer,
-            update_nb, ignore_index, metrics
+        metrics = train_one_update(
+            args, batch_iterator, ignore_idx, model,
+            loss_fn, optimizer, update_nb, writer=writer,
+            cur_num_sents=num_sents_elapsed,
+            cur_num_tokens=num_tokens_elapsed,
+            verbose=update_nb % args.log_interval == 0
         )
-
-        if update_nb % args.log_interval == 0:
-            metrics.update(
-                update_nb=update_nb,
-                time_elapsed=time() - start_time,
-                lr=float(optimizer.lr)
-            )
-            metrics.print_metric()
+        num_sents_elapsed = metrics['num_sents_elapsed']
+        num_tokens_elapsed = metrics['num_tokens_elapsed']
 
         if update_nb % args.valid_interval == 0:
-            validate(args, valid_dataset, model_, loss_fn, update_nb)
+            validate(args, dataset, model, loss_fn, update_nb, valid_writer)
 
         if update_nb % args.save_interval == 0:
             checkpoint_utils.save_model(model, args.checkpoint_dir, update_nb)
 
-    time_taken = time() - start_time
-    metrics.update(
-        update_nb=args.max_update,
-        time_elapsed=time_taken
-    )
-    sys.stdout.write('\r')
-    metrics.print_metric()
-    validate(args, valid_dataset, model_, loss_fn, args.max_update)
+    validate(args, dataset, model, loss_fn, update_nb, valid_writer)
     checkpoint_utils.save_model(model, args.checkpoint_dir, update_nb)
+
+    time_taken = time() - start_time()
     print('Training done in {:.1f}s'.format(time_taken))
-
-
-def main(args):
-    print('Loading dataset')
-    train_dataset, valid_dataset = load_datasets(args)
-
-    print('Loading model')
-    model = load_model(args, train_dataset.src_dict, train_dataset.tgt_dict)
-
-    print('Making other training misc')
-    loss_fn = make_loss_fn(args, train_dataset)
-    optimizer = make_optimizer(args, model)
-
-    train(args, train_dataset, valid_dataset, model, loss_fn, optimizer)
 
 
 if __name__ == "__main__":
     parser = make_parser()
-    args = parse_args(parser)
+    args = add_arch_and_parse_args(parser)
     main(args)
