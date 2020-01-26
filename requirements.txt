@@ -1,0 +1,5 @@
+tqdm
+torch>=1.4
+sacremoses>=0.0.33
+subword-nmt>=0.3.7
+tensorboardX
