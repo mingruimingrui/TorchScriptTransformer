@@ -32,16 +32,16 @@ class TransformerEncoderLayer(torch.nn.Module):
         self.fc2 = Linear(ffn_embed_dim, self.embed_dim)
         self.final_layer_norm = torch.nn.LayerNorm(self.embed_dim)
 
-    def forward(self, x, encoder_padding_mask, attn_mask):
-        # type: (Tensor, Optional[Tensor], Optional[Tensor]) -> Tensor
+    def forward(self, x, encoder_padding_mask):
+        # type: (Tensor, Optional[Tensor]) -> Tensor
         residual = x
         if self.normalize_before:
             x = self.self_attn_layer_norm(x).type_as(x)
         x, _, _ = self.self_attn.forward_self_attn(
             x,
             need_weights=False,
-            attn_mask=attn_mask,
             key_padding_mask=encoder_padding_mask,
+            attn_mask=None,
             saved_state=None
         )
         x = torch.nn.functional.dropout(
