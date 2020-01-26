@@ -109,35 +109,43 @@ class TransformerModel(torch.nn.Module):
         decoder = TransformerDecoder(args, tgt_dict, decoder_embed_tokens)
         return cls(args, encoder, decoder)
 
-    def forward(self, src_tokens, src_lengths, prev_output_tokens):
-        # type: (Tensor, Tensor, Tensor) -> Tuple[Tensor, Optional[Tensor]]
+    def forward(self, src_tokens, prev_output_tokens, need_attn):
+        # type: (Tensor, Tensor, Optional[bool]) -> Tuple[Tensor, Optional[Tensor]]
 
-        encoder_out, encoder_padding_mask = self.forward_encoder(
-            src_tokens=src_tokens,
-            src_lengths=src_lengths
-        )
+        encoder_out, encoder_padding_mask = self.forward_encoder(src_tokens)
         logits, attn, new_incremental_state = self.decoder(
             prev_output_tokens=prev_output_tokens,
             encoder_out=encoder_out,
             encoder_padding_mask=encoder_padding_mask,
             incremental_state=None,
-            need_attn=False
+            need_attn=need_attn
         )
 
         return logits, attn
 
     @torch.jit.export
-    def forward_encoder(self, src_tokens, src_lengths):
-        # type: (Tensor, Tensor) -> Tuple[Tensor, Optional[Tensor]]
-        encoder_out, encoder_padding_mask = self.encoder(
-            src_tokens=src_tokens,
-            src_lengths=src_lengths
-        )
+    def forward_encoder(self, src_tokens):
+        # type: (Tensor) -> Tuple[Tensor, Optional[Tensor]]
+        encoder_out, encoder_padding_mask = self.encoder(src_tokens)
         return encoder_out, encoder_padding_mask
 
     @torch.jit.unused
-    def forward_decoder(self):
-        raise NotImplementedError()
+    def forward_decoder(
+        self,
+        prev_output_tokens,
+        encoder_out,
+        encoder_padding_mask,
+        incremental_state,
+        need_attn
+    ):
+        # type: (Tensor, Tensor, Optional[Tensor], Optional[List[Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]]], Optional[bool]) -> Tuple[Tensor, Optional[Tensor], List[Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]]]
+        return self.forward_decoder(
+            prev_output_tokens=prev_output_tokens,
+            encoder_out=encoder_out,
+            encoder_padding_mask=encoder_padding_mask,
+            incremental_state=incremental_state,
+            need_attn=need_attn
+        )
 
 
 class TransformerEncoder(torch.nn.Module):
@@ -177,8 +185,8 @@ class TransformerEncoder(torch.nn.Module):
         self.normalize_before = args.normalize_before
         self.layer_norm = torch.nn.LayerNorm(args.embed_dim)
 
-    def forward(self, src_tokens, src_lengths):
-        # type: (Tensor, Tensor) -> Tuple[Tensor, Optional[Tensor]]
+    def forward(self, src_tokens):
+        # type: (Tensor) -> Tuple[Tensor, Optional[Tensor]]
 
         # Look up embeddings
         x = self.embed_scale * self.embed_tokens(src_tokens)
@@ -198,7 +206,7 @@ class TransformerEncoder(torch.nn.Module):
 
         # encoder layers
         for layer in self.layers:
-            x = layer(x, encoder_padding_mask, None)
+            x = layer(x, encoder_padding_mask)
 
         if self.normalize_before:
             x = self.layer_norm(x).type_as(x)
@@ -214,8 +222,8 @@ class TransformerEncoder(torch.nn.Module):
         # type: (Tensor, Optional[Tensor], Tensor) -> Tuple[Tensor, Optional[Tensor]]
         encoder_out = encoder_out.index_select(1, new_order)
         if encoder_padding_mask is not None:
-            encoder_padding_mask = encoder_padding_mask.index_select(0, new_order)
-
+            encoder_padding_mask = \
+                encoder_padding_mask.index_select(0, new_order)
         return encoder_out, encoder_padding_mask
 
 
@@ -309,7 +317,8 @@ class TransformerDecoder(torch.nn.Module):
             self_attn_padding_mask = None
 
         # Decoder layers
-        new_incremental_state = torch.jit.annotate(List[Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]], [])
+        new_incremental_state = torch.jit.annotate(
+            List[Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]], [])
         idx = 0  # We can't use enumerate
         attn = torch.jit.annotate(Optional[Tensor], None)
         for layer in self.layers:
