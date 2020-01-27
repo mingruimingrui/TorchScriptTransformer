@@ -20,21 +20,21 @@ class MultiheadAttention(torch.nn.Module):
             "embed_dim must be divisible by num_heads"
         self.scaling = self.head_dim ** -0.5
 
-        self.in_proj_weight = torch.nn.Parameter(
-            torch.Tensor(3 * embed_dim, embed_dim))
-        if bias:
-            self.in_proj_bias = torch.nn.Parameter(torch.Tensor(3 * embed_dim))
-        else:
-            self.register_parameter('in_proj_bias', None)
+        self.q_proj = torch.nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.k_proj = torch.nn.Linear(embed_dim, embed_dim, bias=bias)
+        self.v_proj = torch.nn.Linear(embed_dim, embed_dim, bias=bias)
         self.out_proj = torch.nn.Linear(embed_dim, embed_dim, bias=bias)
 
         self.reset_parameters()
 
+    @torch.jit.unused
     def reset_parameters(self):
-        torch.nn.init.xavier_normal_(self.in_proj_weight)
-        torch.nn.init.xavier_normal_(self.out_proj.weight)
-        if self.in_proj_bias is not None:
-            torch.nn.init.constant_(self.in_proj_bias, 0.)
+        torch.nn.init.xavier_uniform_(self.q_proj.weight, gain=2 ** -0.5)
+        torch.nn.init.xavier_uniform_(self.k_proj.weight, gain=2 ** -0.5)
+        torch.nn.init.xavier_uniform_(self.v_proj.weight, gain=2 ** -0.5)
+
+        torch.nn.init.xavier_uniform_(self.out_proj.weight)
+        if self.out_proj.bias is not None:
             torch.nn.init.constant_(self.out_proj.bias, 0.)
 
     def _forward_qkv(
@@ -94,11 +94,12 @@ class MultiheadAttention(torch.nn.Module):
 
         tgt_len, bsz, embed_dim = x.size()
 
-        q = self.in_proj_q(x)
+        q = self.q_proj(x)
         q = q.contiguous().view(
             tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
         if saved_state is None:
-            k, v = self.in_proj_kv(encoder_out)
+            k = self.k_proj(encoder_out)
+            v = self.v_proj(encoder_out)
             k = k.contiguous().view(
                 -1, bsz * self.num_heads, self.head_dim).transpose(0, 1)
             v = v.contiguous().view(
@@ -127,9 +128,10 @@ class MultiheadAttention(torch.nn.Module):
         # type: (Tensor, Optional[Tensor], Optional[Tensor], Optional[Tuple[Tensor, Tensor]], Optional[bool]) -> Tuple[Tensor, Optional[Tensor], Tuple[Tensor, Tensor]]
 
         tgt_len, bsz, embed_dim = x.size()
-        q, k, v = self.in_proj_qkv(x)
+        q = self.q_proj(x) * self.scaling
+        k = self.k_proj(x)
+        v = self.v_proj(x)
 
-        q *= self.scaling
         q = q.contiguous().view(
             tgt_len, bsz * self.num_heads, self.head_dim).transpose(0, 1)
         k = k.contiguous().view(
@@ -156,32 +158,3 @@ class MultiheadAttention(torch.nn.Module):
         )
 
     forward = forward_self_attn
-
-    def in_proj_qkv(self, query):
-        return self._in_proj(query, 0, 3 * self.embed_dim).chunk(3, dim=-1)
-
-    def in_proj_kv(self, key):
-        return self._in_proj(
-            key,
-            self.embed_dim,
-            3 * self.embed_dim
-        ).chunk(2, dim=-1)
-
-    def in_proj_q(self, query):
-        return self._in_proj(query, 0, self.embed_dim)
-
-    def in_proj_k(self, key):
-        return self._in_proj(key, self.embed_dim, 2 * self.embed_dim)
-
-    def in_proj_v(self, value):
-        return self._in_proj(value, 2 * self.embed_dim, 3 * self.embed_dim)
-
-    def _in_proj(self, input, start, end):
-        # type: (Tensor, int, int) -> Tensor
-        weight = self.in_proj_weight
-        bias = self.in_proj_bias
-        # weight = weight.narrow(0, start, end)
-        weight = weight[start:end, :]
-        if bias is not None:
-            bias = bias[start:end]
-        return torch.nn.functional.linear(input, weight, bias)
