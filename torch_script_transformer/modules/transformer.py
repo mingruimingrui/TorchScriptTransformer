@@ -248,7 +248,7 @@ class TransformerDecoder(torch.nn.Module):
         self.embed_positions = PositionalEmbedding(
             num_embeddings=self.max_target_positions,
             embedding_dim=embed_dim,
-            padding_idx=dictionary.pad_index
+            padding_idx=dictionary.pad_index,
             learned=args.learned_pos
         )
 
