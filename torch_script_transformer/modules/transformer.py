@@ -166,6 +166,7 @@ class TransformerEncoder(torch.nn.Module):
         self.embed_positions = PositionalEmbedding(
             num_embeddings=self.max_source_positions,
             embedding_dim=embed_dim,
+            padding_idx=dictionary.pad_index,
             learned=args.learned_pos
         )
 
@@ -190,7 +191,7 @@ class TransformerEncoder(torch.nn.Module):
 
         # Look up embeddings
         x = self.embed_scale * self.embed_tokens(src_tokens)
-        x = x + self.embed_positions(src_tokens.size(1), 0)
+        x = x + self.embed_positions(src_tokens, 0)
         x = torch.nn.functional.dropout(
             x, p=self.dropout, training=self.training)
 
@@ -247,6 +248,7 @@ class TransformerDecoder(torch.nn.Module):
         self.embed_positions = PositionalEmbedding(
             num_embeddings=self.max_target_positions,
             embedding_dim=embed_dim,
+            padding_idx=dictionary.pad_index
             learned=args.learned_pos
         )
 
@@ -302,7 +304,7 @@ class TransformerDecoder(torch.nn.Module):
         x = self.embed_scale * self.embed_tokens(prev_output_tokens)
         # if self.proj_in_dim is not None:
         #     x = self.proj_in_dim(x)
-        x = x + self.embed_positions(prev_output_tokens.size(1), start)
+        x = x + self.embed_positions(prev_output_tokens, start)
         x = torch.nn.functional.dropout(
             x, p=self.dropout, training=self.training)
 
