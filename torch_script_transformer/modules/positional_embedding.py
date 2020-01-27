@@ -6,51 +6,58 @@ https://github.com/pytorch/fairseq/tree/master/fairseq/modules/sinusoidal_positi
 
 import math
 import torch
+from torch import Tensor
 from typing import Optional
 
 
 class LearnedPositionalEmbedding(torch.nn.Embedding):
 
-    def __init__(self, num_embeddings, embedding_dim, padding_idx=None):
+    def __init__(self, num_embeddings, embedding_dim, padding_idx):
         super().__init__(num_embeddings, embedding_dim)
-        if padding_idx:
-            self.weight[padding_idx] = 0
 
-    def forward(self, seq_len, start):
-        # type: (int, Optional[int]) -> Tensor
+    def reset_parameters(self):
+        torch.nn.init.xavier_normal_(self.weight)
+        self.weight[self.padding_idx] = 0
+
+    def forward(self, input_tokens, start):
+        # type: (Tensor, Optional[int]) -> Tensor
         if start is None:
             start = 0
-        return self.weight[start:(start + seq_len)].detach()
-        # return self.weight.narrow(0, start, seq_len)
+        positions = make_positions(input_tokens, self.padding_idx) + start
+        return super().forward(positions).detach()
 
 
 class SinusoidalPositionalEmbedding(torch.nn.Module):
 
-    def __init__(self, num_embeddings, embedding_dim, padding_idx=None):
+    def __init__(self, num_embeddings, embedding_dim, padding_idx):
         super().__init__()
 
+        self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
+        self.padding_idx = padding_idx
         self.register_buffer('weight', make_sinusoidal_embeddings(
             num_embeddings, embedding_dim, padding_idx))
 
-    def forward(self, seq_len, start):
-        # type: (int, Optional[int]) -> Tensor
+    def forward(self, input_tokens, start):
+        # type: (Tensor, Optional[int]) -> Tensor
         if start is None:
             start = 0
-        return self.weight[start:(start + seq_len)].detach()
-        # return self.weight.narrow(0, start, seq_len).detach()
+        positions = make_positions(input_tokens, self.padding_idx) + start
+        return torch.nn.functional.embedding(positions, self.weight).detach()
 
 
 def PositionalEmbedding(
     num_embeddings,
     embedding_dim,
+    padding_idx,
     learned=False
 ):
     if learned:
-        m = LearnedPositionalEmbedding(num_embeddings, embedding_dim)
-        torch.nn.init.xavier_normal_(m.weight)
+        m = LearnedPositionalEmbedding(
+            num_embeddings, embedding_dim, padding_idx)
     else:
-        m = SinusoidalPositionalEmbedding(num_embeddings, embedding_dim)
+        m = SinusoidalPositionalEmbedding(
+            num_embeddings, embedding_dim, padding_idx)
     return m
 
 
@@ -81,3 +88,18 @@ def make_sinusoidal_embeddings(
     if padding_idx is not None:
         emb[padding_idx, :] = 0
     return emb
+
+
+def make_positions(tensor, padding_idx, onnx_trace=False):
+    """Replace non-padding symbols with their position numbers.
+
+    Position numbers begin at 1. Padding symbols are ignored.
+    """
+    # The series of casts and type-conversions here are carefully
+    # balanced to both work with ONNX export and XLA. In particular XLA
+    # prefers ints, cumsum defaults to output longs, and ONNX doesn't know
+    # how to handle the dtype kwarg in cumsum.
+    mask = tensor.ne(padding_idx).int()
+    return (
+        torch.cumsum(mask, dim=1).type_as(mask) * mask
+    ).long()
