@@ -17,7 +17,7 @@ class LearnedPositionalEmbedding(torch.nn.Embedding):
 
     def reset_parameters(self):
         torch.nn.init.xavier_normal_(self.weight)
-        self.weight[self.padding_idx] = 0
+        self.weight[0] = 0
 
     def forward(self, input_tokens, start):
         # type: (Tensor, Optional[int]) -> Tensor
