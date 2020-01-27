@@ -40,6 +40,7 @@ def _worker_loop(
     src_max_pos, tgt_max_pos,
     src_prepend_bos, src_append_eos,
     tgt_prepend_bos, tgt_append_eos,
+    tgt_replace_bos_w_eos,
     src_pad_left, tgt_pad_left
 ):
     def form_batches(list_token_ids):
@@ -93,6 +94,8 @@ def _worker_loop(
             tgt_token_ids = tgt_bpe_model.process_line(tgt_line, bpe_dropout)
             tgt_token_ids = tgt_dict.encode_line(
                 tgt_token_ids, tgt_prepend_bos, tgt_append_eos)
+            if tgt_prepend_bos and tgt_replace_bos_w_eos:
+                tgt_token_ids[0] = tgt_dict.eos_index
 
             if len(src_token_ids) > src_max_pos:
                 continue
@@ -139,6 +142,7 @@ class LangPairDataset(object):
         src_max_pos=1024, tgt_max_pos=1024,
         src_prepend_bos=False, src_append_eos=True,
         tgt_prepend_bos=True, tgt_append_eos=True,
+        tgt_replace_bos_w_eos=False,
         src_pad_left=True, tgt_pad_left=False
     ):
         filepaths = []
@@ -171,6 +175,8 @@ class LangPairDataset(object):
 
         self.tgt_prepend_bos = tgt_prepend_bos
         self.tgt_append_eos = tgt_append_eos
+
+        self.tgt_replace_bos_w_eos = tgt_replace_bos_w_eos
 
         self.src_pad_left = src_pad_left
         self.tgt_pad_left = tgt_pad_left
@@ -248,6 +254,7 @@ class LangPairDataset(object):
                         self.src_max_pos, self.tgt_max_pos,
                         self.src_prepend_bos, self.src_append_eos,
                         self.tgt_prepend_bos, self.tgt_append_eos,
+                        self.tgt_replace_bos_w_eos,
                         self.src_pad_left, self.tgt_pad_left
                     )
                 )
