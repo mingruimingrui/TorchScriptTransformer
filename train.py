@@ -251,13 +251,6 @@ def make_optimizer(args, model):
             weight_decay=args.weight_decay,
         )
 
-        # optimizer = torch.optim.Adam(
-        #     model.parameters(),
-        #     lr=determine_lr(args, 1),
-        #     betas=adam_betas,
-        #     weight_decay=args.weight_decay
-        # )
-
     else:
         raise ValueError(
             '{} is not a valid --optimizer'.format(args.optimizer))
@@ -435,7 +428,14 @@ def main(args):
             update_nb == 1 or
             update_nb == args.max_update
         ):
-            validate(args, dataset, model, loss_fn, update_nb, valid_writer)
+            validate(
+                args=args,
+                dataset=valid_dataset,
+                model=model,
+                loss_fn=loss_fn,
+                update_nb=update_nb,
+                writer=valid_writer
+            )
 
         if (
             update_nb % args.save_interval == 0 or
