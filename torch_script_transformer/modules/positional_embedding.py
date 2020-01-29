@@ -90,7 +90,8 @@ def make_sinusoidal_embeddings(
     return emb
 
 
-def make_positions(tensor, padding_idx, onnx_trace=False):
+def make_positions(tensor, padding_idx):
+    # type: (Tensor, int) -> Tensor
     """Replace non-padding symbols with their position numbers.
 
     Position numbers begin at 1. Padding symbols are ignored.
@@ -100,6 +101,5 @@ def make_positions(tensor, padding_idx, onnx_trace=False):
     # prefers ints, cumsum defaults to output longs, and ONNX doesn't know
     # how to handle the dtype kwarg in cumsum.
     mask = tensor.ne(padding_idx).int()
-    return (
-        torch.cumsum(mask, dim=1).type_as(mask) * mask
-    ).long()
+    positions = torch.cumsum(mask, dim=1).type_as(mask) * mask
+    return positions.long()
