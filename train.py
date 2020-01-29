@@ -23,8 +23,15 @@ from torch_script_transformer.modules.transformer \
 from torch_script_transformer.modules.smooth_cross_entropy \
     import SmoothCrossEntropyLoss
 from torch_script_transformer.optim.adam import Adam
-from torch_script_transformer.utils \
-    import checkpoint_utils
+from torch_script_transformer.utils.checkpoint_utils import CheckpointManager
+
+
+class Meter(dict):
+    def __repr__(self):
+        return json.dumps({
+            k: ('{:.3g}'.format(v) if isinstance(v, float) else v)
+            for k, v in self.metrics.items()
+        })
 
 
 def make_parser():
@@ -63,6 +70,10 @@ def make_parser():
         help='BPE mdoel path for target language')
 
     train_group = parser.add_argument_group('train_group')
+
+    train_group.add_argument(
+        '--init_checkpoint_path', type=str, metavar='FP',
+        help='A checkpoint dir or file to initialize model from')
 
     train_group.add_argument(
         '--cpu', action='store_true',
@@ -125,6 +136,9 @@ def make_parser():
         help='The BPE dropout rate')
 
     train_group.add_argument(
+        '--keep_interval', type=int, metavar='N',
+        help='Keep only latest N updates')
+    train_group.add_argument(
         '--save_interval', type=int, metavar='N', default=10000,
         help='Save every N updates')
     train_group.add_argument(
@@ -136,24 +150,9 @@ def make_parser():
 
     model_group = parser.add_argument_group('model_group')
     TransformerModel.add_args(model_group)
+    model_group.set_defaults(**base_architecture)
 
     return parser
-
-
-def add_arch_and_parse_args(parser, argv=None):
-    default_args = argparse.Namespace()
-    base_architecture(default_args)
-
-    default_kwargs = {}
-    for k in dir(default_args):
-        if k.startswith('_'):
-            continue
-        default_kwargs[k] = getattr(default_args, k)
-
-    parser.set_defaults(**default_kwargs)
-    args = parser.parse_args(argv)
-
-    return args
 
 
 def get_device(args):
@@ -186,6 +185,7 @@ def load_datasets(args):
         'tgt_max_pos': args.max_target_positions,
         'src_prepend_bos': False, 'src_append_eos': True,
         'tgt_prepend_bos': True, 'tgt_append_eos': True,
+        'tgt_replace_bos_w_eos': False,
         'src_pad_left': True, 'tgt_pad_left': False
     }
 
@@ -197,28 +197,33 @@ def load_datasets(args):
     return train_dataset, valid_dataset
 
 
-def make_batch_iterator(args, dataset, generate_infinitely=False):
+def make_batch_iterator(args, dataset, train=False):
     return dataset.create_batch_iterator(
         max_batch_tokens=args.max_batch_tokens,
         max_batch_sents=args.max_batch_sents,
-        bpe_dropout=args.bpe_dropout,
-        generate_infinitely=generate_infinitely,
+        bpe_dropout=args.bpe_dropout if train else 0.0,
+        generate_infinitely=bool(train),
         num_workers=args.num_workers,
         prefetch=1
     )
 
 
 def load_model(args, src_dict, tgt_dict):
-    model = TransformerModel.build_model(args, src_dict, tgt_dict)
+    if args.init_checkpoint_path:
+        model, _, _ = CheckpointManager.load(
+            args.init_checkpoint_path, src_dict, tgt_dict)
+    else:
+        model = TransformerModel.build_model(args, src_dict, tgt_dict)
     model = model.to(get_device(args))
     if args.fp16:
         model = model.half()
+    else:
+        model = model.float()
     return model
 
 
 def make_loss_fn(args, dataset):
     loss_fn = SmoothCrossEntropyLoss(
-        len(dataset.tgt_dict),
         smoothing=args.label_smoothing,
         reduction='mean'
     )
@@ -258,7 +263,7 @@ def make_optimizer(args, model):
     return optimizer
 
 
-def forward_loss(model, loss_fn, batch, device, ignore_idx):
+def forward_loss(model, loss_fn, batch, device, ignore_idx, compute_mrr=False):
     with torch.no_grad():
         src_tokens = batch[0]
         tgt_tokens = batch[2]
@@ -273,15 +278,13 @@ def forward_loss(model, loss_fn, batch, device, ignore_idx):
     logits, _ = model(src_tokens, prev_output_tokens, False)
     logits = logits[keep_pos]
 
-    loss = loss_fn(logits, labels)
-    return loss
+    loss, nll_loss = loss_fn(logits, labels)
+    return loss, nll_loss
 
 
-def ppdict(metrics):
-    print(json.dumps({
-        k: ('{:.3g}'.format(v) if isinstance(v, float) else v)
-        for k, v in metrics.items()
-    }))
+def clear_stderr():
+    sys.stderr.write('\r')
+    sys.stderr.flush()
 
 
 @torch.no_grad()
@@ -291,7 +294,9 @@ def validate(args, dataset, model, loss_fn, update_nb=None, writer=None):
     device = get_device(args)
     ignore_idx = dataset.tgt_dict.pad_index
 
+    # Do inference and collate metrics
     total_loss = 0
+    total_nll_loss = 0
     total_num_batches = 0
     total_num_sents = 0
     total_num_tokens = 0
@@ -301,45 +306,58 @@ def validate(args, dataset, model, loss_fn, update_nb=None, writer=None):
         total_num_sents += len(src_lengths)
         total_num_tokens += int(src_lengths.sum())
 
-        loss = forward_loss(model, loss_fn, batch, device, ignore_idx)
+        loss, nll_loss = \
+            forward_loss(model, loss_fn, batch, device, ignore_idx)
         total_loss += float(loss.item())
+        total_nll_loss += float(nll_loss.item())
 
     time_taken = time() - start_time
 
-    metrics = {
-        'update_nb': update_nb,
-        'valid_loss': total_loss / total_num_batches,
-        'time_taken': time_taken,
-        'bps': total_num_batches / time_taken,
-        'sps': total_num_sents / time_taken,
-        'wps': total_num_tokens / time_taken
-    }
-    sys.stderr.write('\r')
-    sys.stderr.flush()
-    ppdict(metrics)
+    # Make metrics dict
+    metrics = Meter(
+        update_nb=update_nb,
+        valid_loss=total_loss / total_num_batches,
+        valid_nll_loss=total_nll_loss / total_num_batches,
+        time_taken=time_taken,
+        bps=total_num_batches / time_taken,
+        sps=total_num_sents / time_taken,
+        wps=total_num_tokens / time_taken
+    )
+
+    # Print metrics
+    clear_stderr()
+    print(metrics)
+
+    # Log to tensorboard
     if writer:
-        writer.add_scalar('valid_loss', metrics['valid_loss'], update_nb)
+        keys_to_write = ['valid_loss', 'valid_nll_loss']
+        for k in keys_to_write:
+            writer.add_scalar(k, metrics[k], update_nb)
 
     return metrics
 
 
 def train_one_update(
-    args, batch_iterator, ignore_idx, model,
+    args, batch_iterator, dataset, model,
     loss_fn, optimizer, update_nb,
-    writer=None, cur_num_sents=None, cur_num_tokens=None,
+    writer=None, metrics=None,
     verbose=False
 ):
     start_time = time()
     model.train()
     device = get_device(args)
+    ignore_idx = dataset.tgt_dict.pad_index
+
+    # Do forward, accumulate gradients, and apply
     optimizer.lr = determine_lr(args, update_nb)
+    optimizer.zero_grad()
 
     total_loss = 0
+    total_nll_loss = 0
     total_num_batches = 0
     total_num_sents = 0
     total_num_tokens = 0
 
-    optimizer.zero_grad()
     for _ in range(args.update_freq):
         batch = next(batch_iterator)
 
@@ -348,42 +366,44 @@ def train_one_update(
         total_num_sents += len(src_lengths)
         total_num_tokens += int(src_lengths.sum())
 
-        loss = forward_loss(model, loss_fn, batch, device, ignore_idx)
+        loss, nll_loss = \
+            forward_loss(model, loss_fn, batch, device, ignore_idx)
         loss.backward()
         total_loss += float(loss.item())
+        total_nll_loss += float(nll_loss.item())
     optimizer.step()
 
     time_taken = time() - start_time
 
-    metrics = {
+    # Make/Update metric dict
+    metric_updates = {
         'update_nb': update_nb,
         'loss': total_loss / total_num_batches,
+        'nll_loss': total_nll_loss / total_num_batches,
         'bps': total_num_batches / time_taken,
         'sps': total_num_sents / time_taken,
         'wps': total_num_tokens / time_taken,
         'lr': float(optimizer.lr)
     }
-    if cur_num_sents is not None:
-        metrics['num_sents_elapsed'] = cur_num_sents + total_num_sents
-    if cur_num_tokens is not None:
-        metrics['num_tokens_elapsed'] = cur_num_tokens + total_num_tokens
+    if metrics:
+        metrics.update(**metric_updates)
+    else:
+        metrics = Meter(**metric_updates)
+
+    metrics['num_sents_elapsed'] = \
+        metrics.get('num_sents_elapsed', 0) + total_num_sents
     if verbose:
-        sys.stderr.write('\r')
-        sys.stderr.flush()
-        ppdict(metrics)
+        clear_stderr()
+        print(metrics)
 
     if writer:
-        writer.add_scalar('loss', metrics['loss'], update_nb)
-        writer.add_scalar('bps', metrics['bps'], update_nb)
-        writer.add_scalar('sps', metrics['sps'], update_nb)
-        writer.add_scalar('wps', metrics['wps'], update_nb)
-        writer.add_scalar('lr', metrics['lr'], update_nb)
-        if cur_num_sents:
-            writer.add_scalar(
-                'num_sents_elapsed', metrics['num_sents_elapsed'], update_nb)
-        if cur_num_sents:
-            writer.add_scalar(
-                'num_tokens_elapsed', metrics['num_tokens_elapsed'], update_nb)
+        keys_to_write = [
+            'loss', 'nll_loss',
+            'bps', 'sps', 'wps',
+            'lr', 'num_sents_elapsed'
+        ]
+        for k in keys_to_write:
+            writer.add_scalar(k, metrics[k], update_nb)
 
     return metrics
 
@@ -397,37 +417,35 @@ def main(args):
 
     print('Loading model')
     model = load_model(args, dataset.src_dict, dataset.tgt_dict)
+    print(model)
 
     print('Making other training misc')
     loss_fn = make_loss_fn(args, dataset)
     optimizer = make_optimizer(args, model)
 
     batch_iterator = make_batch_iterator(args, dataset, True)
-    ignore_idx = dataset.tgt_dict.pad_index
-    num_sents_elapsed = 0
-    num_tokens_elapsed = 0
-
+    metrics = Meter()
     writer = SummaryWriter(os.path.join(args.checkpoint_dir, 'train'))
     valid_writer = SummaryWriter(os.path.join(args.checkpoint_dir, 'valid'))
+    chekcpoint_manager = CheckpointManager(
+        args.checkpoint_dir, model, keep_nb=args.keep_interval)
     pbar = tqdm(total=args.max_update, ncols=80)
 
     for update_nb in range(1, args.max_update + 1):
         pbar.update(1)
         metrics = train_one_update(
-            args, batch_iterator, ignore_idx, model,
-            loss_fn, optimizer, update_nb, writer=writer,
-            cur_num_sents=num_sents_elapsed,
-            cur_num_tokens=num_tokens_elapsed,
+            args, batch_iterator, dataset, model,
+            loss_fn, optimizer, update_nb,
+            writer=writer, metrics=metrics,
             verbose=update_nb % args.log_interval == 0
         )
-        num_sents_elapsed = metrics['num_sents_elapsed']
-        num_tokens_elapsed = metrics['num_tokens_elapsed']
 
-        if (
+        should_validate = (
             update_nb % args.valid_interval == 0 or
             update_nb == 1 or
             update_nb == args.max_update
-        ):
+        )
+        if should_validate:
             validate(
                 args=args,
                 dataset=valid_dataset,
@@ -437,12 +455,12 @@ def main(args):
                 writer=valid_writer
             )
 
-        if (
+        should_save = (
             update_nb % args.save_interval == 0 or
             update_nb == args.max_update
-        ):
-            checkpoint_utils.save_model(model, args.checkpoint_dir, update_nb)
-            checkpoint_utils.save_model(model, args.checkpoint_dir, 'latest')
+        )
+        if should_save:
+            chekcpoint_manager.save(update_nb)
 
     time_taken = time() - start_time()
     print('Training done in {:.1f}s'.format(time_taken))
@@ -450,5 +468,5 @@ def main(args):
 
 if __name__ == "__main__":
     parser = make_parser()
-    args = add_arch_and_parse_args(parser)
+    args = parser.parse_args()
     main(args)
