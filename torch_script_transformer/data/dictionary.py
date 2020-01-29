@@ -8,7 +8,7 @@ from __future__ import unicode_literals
 
 import io
 import torch
-from six import text_type
+from six import text_type, string_types
 from collections import Counter
 
 
@@ -178,11 +178,18 @@ class Dictionary(object):
                 self.symbols.append(word)
                 self.count.append(count)
 
-    def save(self, filepath):
+    def save(self, f):
         """Stores dictionary into a text file"""
-        with io.open(filepath, 'w', encoding='utf-8', newline='\n') as f:
-            for word, count in zip(
-                self.symbols[self.nspecial:],
-                self.count[self.nspecial:]
-            ):
-                f.write('{} {}\n'.format(word, count))
+        opened_here = False
+        if isinstance(f, string_types):
+            f = io.open(f, 'w', encoding='utf-8', newline='\n')
+            opened_here = True
+
+        for word, count in zip(
+            self.symbols[self.nspecial:],
+            self.count[self.nspecial:]
+        ):
+            f.write('{} {}\n'.format(word, count))
+
+        if opened_here:
+            f.close()
