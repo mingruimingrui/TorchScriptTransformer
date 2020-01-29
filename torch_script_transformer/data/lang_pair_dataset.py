@@ -231,6 +231,7 @@ class LangPairDataset(object):
                     while not coord.should_stop():
                         try:
                             coordinated_put(coord, chunk_queue, chunk)
+                            break
                         except CoordinatorStoppedException:
                             coord_stopped = True
                             break
