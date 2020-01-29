@@ -9,12 +9,11 @@ import json
 import argparse
 from collections import Mapping, Iterable
 
-from tensorboardX import SummaryWriter
-
 from time import time
 from tqdm import tqdm
 
 import torch
+from tensorboardX import SummaryWriter
 
 from torch_script_transformer.data.lang_pair_dataset \
     import LangPairDataset
