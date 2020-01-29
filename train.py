@@ -431,6 +431,7 @@ def main(args):
         args.checkpoint_dir, model, keep_nb=args.keep_interval)
     pbar = tqdm(total=args.max_update, ncols=80)
 
+    # Update, Optional[validate], Optional[save]
     for update_nb in range(1, args.max_update + 1):
         pbar.update(1)
         metrics = train_one_update(
