@@ -17,6 +17,10 @@ class Adam(torch.optim.Optimizer):
 
     It has been proposed in `Adam: A Method for Stochastic Optimization`_.
 
+    Note it's important to use this instead of torch.optim.Adam when doing fp16
+    training. This version of Adam does update on a fp32 copy of the model
+    which improves numerical stability.
+
     Arguments:
         params (iterable): iterable of parameters to optimize or dicts defining
             parameter groups
@@ -112,6 +116,6 @@ class Adam(torch.optim.Optimizer):
 
                 p_data_fp32.addcdiv_(-step_size, exp_avg, denom)
 
-                p.data.copy_(p_data_fp32)
+                p.data.copy_(p_data_fp32.type_as(p.data))
 
         return loss
