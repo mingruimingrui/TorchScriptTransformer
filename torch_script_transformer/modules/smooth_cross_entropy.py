@@ -3,23 +3,25 @@ import torch
 
 class SmoothCrossEntropyLoss(torch.nn.Module):
 
-    def __init__(self, num_labels, smoothing=0.0, reduction='mean'):
+    def __init__(self, smoothing=0.0, reduction='mean'):
         super().__init__()
         assert reduction in {'none', 'mean', 'sum'}
-        self.num_labels = num_labels
         self.confidence = 1 - smoothing
         self.smoothing = smoothing
         self.reduction = reduction
 
     def forward(self, logits, labels):
         lprobs = logits.float().log_softmax(-1)
-        with torch.no_grad():
-            true_dist = torch.zeros_like(lprobs)
-            true_dist.fill_(self.smoothing / (self.num_labels - 1))
-            true_dist.scatter_(1, labels.data.unsqueeze(1), self.confidence)
-        smooth_loss = -(true_dist * lprobs).sum(-1)
+        if labels.dim() == lprobs.dim() - 1:
+            labels = labels.unsqueeze(-1)
+        nll_loss = -lprobs.gather(index=labels, dim=-1).squeeze(-1)
+        smooth_loss = -lprobs.mean(keepdim=False, dim=-1)
+        loss = nll_loss * self.confidence + \
+            smooth_loss * self.smoothing
         if self.reduction == 'mean':
-            smooth_loss = smooth_loss.mean()
+            nll_loss = nll_loss.mean()
+            loss = loss.mean()
         elif self.reduction == 'sum':
-            smooth_loss = smooth_loss.sum()
-        return smooth_loss
+            nll_loss = nll_loss.sum()
+            loss = loss.sum()
+        return loss, nll_loss

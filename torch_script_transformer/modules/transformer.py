@@ -85,7 +85,9 @@ class TransformerModel(torch.nn.Module):
             import argparse
             args = argparse.Namespace()
 
-        base_architecture(args)
+        for k, v in base_architecture.items():
+            if not hasattr(args, k):
+                setattr(args, k, v)
 
         def build_embedding(dictionary, embed_dim):
             num_embeddings = len(dictionary)
@@ -129,7 +131,7 @@ class TransformerModel(torch.nn.Module):
         encoder_out, encoder_padding_mask = self.encoder(src_tokens)
         return encoder_out, encoder_padding_mask
 
-    @torch.jit.unused
+    @torch.jit.export
     def forward_decoder(
         self,
         prev_output_tokens,
@@ -139,7 +141,7 @@ class TransformerModel(torch.nn.Module):
         need_attn
     ):
         # type: (Tensor, Tensor, Optional[Tensor], Optional[List[Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]]], Optional[bool]) -> Tuple[Tensor, Optional[Tensor], List[Tuple[Tuple[Tensor, Tensor], Tuple[Tensor, Tensor]]]]
-        return self.forward_decoder(
+        return self.decoder.forward(
             prev_output_tokens=prev_output_tokens,
             encoder_out=encoder_out,
             encoder_padding_mask=encoder_padding_mask,
@@ -394,23 +396,21 @@ def fill_with_neg_inf(t):
     return t.float().fill_(float('-inf')).type_as(t)
 
 
-def base_architecture(args):
-    args.encoder_layers = getattr(args, 'encoder_layers', 6)
-    args.decoder_layers = getattr(args, 'decoder_layers', 6)
+base_architecture = {
+    'encoder_layers': 6,
+    'decoder_layers': 6,
 
-    args.embed_dim = getattr(args, 'embed_dim', 512)
-    args.ffn_embed_dim = getattr(args, 'ffn_embed_dim', 2048)
-    args.num_attention_heads = getattr(args, 'num_attention_heads', 8)
-    args.normalize_before = getattr(args, 'normalize_before', False)
+    'embed_dim': 512,
+    'ffn_embed_dim': 2048,
+    'num_attention_heads': 8,
+    'normalize_before': False,
 
-    args.learned_pos = getattr(args, 'learned_pos', False)
-    # args.share_decoder_input_output_embed = \
-    #     getattr(args, 'share_decoder_input_output_embed', False)
-    args.share_all_embeddings = getattr(args, 'share_all_embeddings', False)
+    'learned_pos': False,
+    'share_all_embeddings': False,
+    'max_source_positions': 1024,
+    'max_target_positions': 1024,
 
-    args.max_source_positions = getattr(args, 'max_source_positions', 1024)
-    args.max_target_positions = getattr(args, 'max_target_positions', 1024)
-
-    args.dropout = getattr(args, 'dropout', 0.1)
-    args.attention_dropout = getattr(args, 'attention_dropout', 0.)
-    args.activation_dropout = getattr(args, 'activation_dropout', 0.)
+    'droout': 0.1,
+    'attention_dropout': 0.,
+    'activation_dropout': 0.,
+}
