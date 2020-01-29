@@ -14,14 +14,6 @@ from tqdm import tqdm
 
 import torch
 from tensorboardX import SummaryWriter
-
-from torch_script_transformer.data.lang_pair_dataset \
-    import LangPairDataset
-from torch_script_transformer.modules.transformer \
-    import TransformerModel, base_architecture
-from torch_script_transformer.modules.smooth_cross_entropy \
-    import SmoothCrossEntropyLoss
-from torch_script_transformer.optim.adam import Adam
 from torch_script_transformer.utils.checkpoint_utils import CheckpointManager
 
 
@@ -88,9 +80,9 @@ def make_parser():
     train_group.add_argument(
         '--adam_betas', type=str, metavar='O', default='(0.9, 0.98)',
         help='Adam beta 1 and beta 2 in the "(b1, b2)" format')
-    train_group.add_argument(
-        '--clip_norm', type=float, metavar='F', default=0.0,
-        help='Clip norm')
+    # train_group.add_argument(
+    #     '--clip_norm', type=float, metavar='F', default=0.0,
+    #     help='Clip norm')
     train_group.add_argument(
         '--weight_decay', type=float, default=0.0,
         help='Weight decay')
@@ -147,6 +139,9 @@ def make_parser():
         '--log_interval', type=int, metavar='N', default=100,
         help='Log every N updates')
 
+    from torch_script_transformer.modules.transformer \
+        import TransformerModel, base_architecture
+
     model_group = parser.add_argument_group('model_group')
     TransformerModel.add_args(model_group)
     model_group.set_defaults(**base_architecture)
@@ -173,6 +168,9 @@ def to_device(obj, device):
 
 
 def load_datasets(args):
+    """ Loads the training and validation LangPairDataset """
+    from torch_script_transformer.data.lang_pair_dataset import LangPairDataset
+
     dataset_kwargs = {
         'src_lang': args.src_lang,
         'tgt_lang': args.tgt_lang,
@@ -207,7 +205,9 @@ def make_batch_iterator(args, dataset, train=False):
     )
 
 
-def load_model(args, src_dict, tgt_dict):
+def load_or_make_model(args, src_dict, tgt_dict):
+    from torch_script_transformer.modules.transformer import TransformerModel
+
     if args.init_checkpoint_path:
         model, _, _ = CheckpointManager.load(
             args.init_checkpoint_path, src_dict, tgt_dict)
@@ -222,6 +222,13 @@ def load_model(args, src_dict, tgt_dict):
 
 
 def make_loss_fn(args, dataset):
+    """ Loads the loss_fn
+    Note: Currently this function is rather trivial as only
+        SmoothCrossEntropyLoss is used
+    """
+    from torch_script_transformer.modules.smooth_cross_entropy \
+        import SmoothCrossEntropyLoss
+
     loss_fn = SmoothCrossEntropyLoss(
         smoothing=args.label_smoothing,
         reduction='mean'
@@ -243,6 +250,8 @@ def determine_lr(args, update_nb):
 def make_optimizer(args, model):
 
     if args.optimizer == 'adam':
+        from torch_script_transformer.optim.adam import Adam
+
         # Parse adam betas from string
         adam_beta_pattern = re.compile(r'\(([ 0-9\.]+),([ 0-9\.]+)\)')
         match = adam_beta_pattern.match(args.adam_betas)
@@ -415,7 +424,7 @@ def main(args):
     dataset, valid_dataset = load_datasets(args)
 
     print('Loading model')
-    model = load_model(args, dataset.src_dict, dataset.tgt_dict)
+    model = load_or_make_model(args, dataset.src_dict, dataset.tgt_dict)
     print(model)
 
     print('Making other training misc')
