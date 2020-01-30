@@ -40,25 +40,21 @@ def make_parser():
         help='Target language')
 
     parser.add_argument(
-        '--dictpref', type=str, metavar='FP', required=True,
-        help='Dictionary prefix')
-    parser.add_argument(
         '--trainprefs', type=str, metavar='FP', nargs='+', required=True,
         help='Train prefixes')
     parser.add_argument(
         '--validprefs', type=str, metavar='FP', nargs='+',
         help='Validation prefixes')
+    parser.add_argument(
+        '--dictpref', type=str, metavar='FP', required=True,
+        help='Dictionary prefix')
+    parser.add_argument(
+        '--bpepref', type=str, metavar='FP', required=True,
+        help='BPE model prefix')
 
     parser.add_argument(
         '--num_workers', type=int, default=1,
         help='Number of processes load data with')
-
-    parser.add_argument(
-        '--src_bpe_path', type=str, metavar='FP', required=True,
-        help='BPE model path for source language')
-    parser.add_argument(
-        '--tgt_bpe_path', type=str, metavar='FP', required=True,
-        help='BPE mdoel path for target language')
 
     train_group = parser.add_argument_group('train_group')
 
@@ -174,8 +170,8 @@ def load_datasets(args):
     dataset_kwargs = {
         'src_lang': args.src_lang,
         'tgt_lang': args.tgt_lang,
-        'src_code_path': args.src_bpe_path,
-        'tgt_code_path': args.tgt_bpe_path,
+        'src_code_path': '{}.{}'.format(args.bpepref, args.src_lang),
+        'tgt_code_path': '{}.{}'.format(args.bpepref, args.tgt_lang),
         'src_dict_path': '{}.{}'.format(args.dictpref, args.src_lang),
         'tgt_dict_path': '{}.{}'.format(args.dictpref, args.tgt_lang),
         'src_max_pos': args.max_source_positions,
