@@ -10,19 +10,12 @@ else
     git clone https://github.com/moses-smt/mosesdecoder.git ../mosesdecoder
 fi
 
-if [ -d ../subword-nmt ]; then
-    echo 'Skip downloading Subword NMT repository'
-else
-    echo 'Cloning Subword NMT repository (for BPE pre-processing)...'
-    git clone https://github.com/rsennrich/subword-nmt.git ../subword-nmt
-fi
-
-NORM_PUNC=../mosesdecoder/scripts/tokenizer/normalize-punctuation.perl
-REM_NON_PRINT_CHAR=../mosesdecoder/scripts/tokenizer/remove-non-printing-char.perl
-TOKENIZER=../mosesdecoder/scripts/tokenizer/tokenizer.perl
-CLEAN=../mosesdecoder/scripts/training/clean-corpus-n.perl
-LEARN_BPE=../subword-nmt/subword_nmt/learn_bpe.py
-APPLY_BPE=../subword-nmt/subword_nmt/apply_bpe.py
+NORM_PUNC="sacremoses normalize"
+TOKENIZER="sacremoses tokenize"
+CLEAN="perl ../mosesdecoder/scripts/training/clean-corpus-n.perl"
+LEARN_BPE="subword-nmt learn-bpe"
+APPLY_BPE="subword-nmt apply-bpe"
+LEARN_VOCAB="python ../../learn_vocab.py"
 
 RAW_DIR="../raw"
 TEMP_DIR="./tmp"
@@ -49,7 +42,7 @@ CORPORA=(
 src=en
 tgt=de
 lang=$src-$tgt
-num_bpe_tokens=40000
+num_bpe_tokens=32000
 num_workers=8
 
 mkdir -p $RAW_DIR $TEMP_DIR $DATA_DIR
@@ -83,18 +76,15 @@ for l in $src $tgt; do
     rm -f $file
     for f in "${CORPORA[@]}"; do
         cat $RAW_DIR/$f.$l | \
-            perl $NORM_PUNC $l | \
-            perl $REM_NON_PRINT_CHAR | \
-        perl $TOKENIZER -threads $num_workers -a -l $l >> $file
+            sed -e 's/\r/ /g' | \
+            $NORM_PUNC -j $num_workers -l $l | \
+            $TOKENIZER -j $num_workers -a -l $l >> \
+            $file
     done
 done
 
-echo 'Learn BPE'
-cat $TEMP_DIR/clean.$lang.tok.$src $TEMP_DIR/clean.$lang.tok.$tgt | \
-    python $LEARN_BPE -s $num_bpe_tokens > $DATA_DIR/code
-
 echo 'Filtering training data'
-perl $CLEAN --ratio 1.5 \
+$CLEAN --ratio 1.5 \
     $TEMP_DIR/clean.$lang.tok $src $tgt \
     $TEMP_DIR/filter.$lang.tok 1 250
 
@@ -103,9 +93,28 @@ for l in $src $tgt; do
     awk '{if (NR%300 == 0)  print $0; }' $TEMP_DIR/filter.$lang.tok.$l \
         > $DATA_DIR/valid.$lang.tok.$l
     awk '{if (NR%300 != 0)  print $0; }' $TEMP_DIR/filter.$lang.tok.$l \
-        > $DATA_DIR/train.$lang.tok.$l
+        > $TEMP_DIR/train.$lang.tok.$l
     echo ''
 done
+
+echo 'Shuffle training data'
+paste $TEMP_DIR/train.$lang.tok.$src $TEMP_DIR/train.$lang.tok.$tgt | shuf | \
+    awk -F "\t" "{
+        print \$1 > \"$DATA_DIR/train.$lang.tok.$src\";
+        print \$2 > \"$DATA_DIR/train.$lang.tok.$tgt\"
+    }"
+
+echo 'Learn BPE'
+cat $DATA_DIR/train.$lang.tok.$src $DATA_DIR/train.$lang.tok.$tgt | \
+    $LEARN_BPE -s $num_bpe_tokens > $DATA_DIR/code.$lang.$src
+cp $DATA_DIR/code.$lang.$src $DATA_DIR/code.$lang.$tgt
+
+echo 'Learn vocab'
+cat $DATA_DIR/train.$lang.tok.$src $DATA_DIR/train.$lang.tok.$tgt | \
+    $APPLY_BPE -c $DATA_DIR/code.$lang.$src | \
+    $LEARN_VOCAB --threshold 20 --nwords $num_bpe_tokens --show_pbar \
+    > $DATA_DIR/dict.$lang.$src
+cp $DATA_DIR/dict.$lang.$src $DATA_DIR/dict.$lang.$tgt
 
 echo 'Extract testing data'
 for l in $src $tgt; do
