@@ -1,6 +1,6 @@
 """
-Coordinator for coordinating multiple processes / threads
-https://github.com/facebookresearch/DetectAndTrack/blob/master/lib/utils/coordinator.py
+Coordinator for coordinating multiple processes / threads. Taken from
+https://github.com/facebookresearch/Detectron/blob/master/detectron/utils/coordinator.py
 """
 
 from __future__ import absolute_import
