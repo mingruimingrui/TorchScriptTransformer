@@ -6,14 +6,10 @@ This is an experiment designed to replicate the results of
 
 ```
 python ../../train.py \
-    runs/baseline \
-    -s en -t de \
-    --trainprefs data/train.en-de.tok \
-    --validprefs data/valid.en-de.tok \
-    --dictpref data/dict.en-de \
-    --bpepref data/code.en-de
-    --num_workers 2 \
-    --share_all_embeddings \
+    runs/baseline -s en -t de \
+    --trainprefs data/train.en-de.tok --validprefs data/valid.en-de.tok \
+    --dictpref data/dict.en-de --bpepref data/code.en-de
+    --num_workers 2 --share_all_embeddings \
     --dropout 0.3 --attention_dropout 0.1 --activation_dropout 0.1 \
     --optimizer adam --adam_betas '(0.9, 0.98)' \
     --weight_decay 0.0 --label_smoothing 0.1 \
