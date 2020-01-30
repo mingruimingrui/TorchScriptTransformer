@@ -279,11 +279,19 @@ def forward_loss(model, loss_fn, batch, device, ignore_idx, compute_mrr=False):
         keep_pos = labels != ignore_idx
         labels = labels[keep_pos]
 
+    # Forward
     logits, _ = model(src_tokens, prev_output_tokens, False)
-    logits = logits[keep_pos]
 
+    # Compute loss
+    logits = logits[keep_pos]
     loss, nll_loss = loss_fn(logits, labels)
-    return loss, nll_loss
+
+    mean_mrr = None
+    if compute_mrr:
+        mrr = logits.argsort(dim=-1).gather(-1, labels.unsqueeze(-1))
+        mean_mrr = mrr.mean()
+
+    return loss, nll_loss, mean_mrr
 
 
 def clear_stderr():
@@ -301,6 +309,7 @@ def validate(args, dataset, model, loss_fn, update_nb=None, writer=None):
     # Do inference and collate metrics
     total_loss = 0
     total_nll_loss = 0
+    total_mrr = 0
     total_num_batches = 0
     total_num_sents = 0
     total_num_tokens = 0
@@ -310,10 +319,14 @@ def validate(args, dataset, model, loss_fn, update_nb=None, writer=None):
         total_num_sents += len(src_lengths)
         total_num_tokens += int(src_lengths.sum())
 
-        loss, nll_loss = \
-            forward_loss(model, loss_fn, batch, device, ignore_idx)
+        loss, nll_loss, mrr = forward_loss(
+            model, loss_fn,
+            batch, device, ignore_idx,
+            compute_mrr=True
+        )
         total_loss += float(loss.item())
         total_nll_loss += float(nll_loss.item())
+        total_mrr += float(mrr.item())
 
     time_taken = time() - start_time
 
@@ -322,6 +335,7 @@ def validate(args, dataset, model, loss_fn, update_nb=None, writer=None):
         update_nb=update_nb,
         valid_loss=total_loss / total_num_batches,
         valid_nll_loss=total_nll_loss / total_num_batches,
+        valid_mrr=total_mrr / total_num_batches,
         time_taken=time_taken,
         bps=total_num_batches / time_taken,
         sps=total_num_sents / time_taken,
@@ -370,8 +384,11 @@ def train_one_update(
         total_num_sents += len(src_lengths)
         total_num_tokens += int(src_lengths.sum())
 
-        loss, nll_loss = \
-            forward_loss(model, loss_fn, batch, device, ignore_idx)
+        loss, nll_loss, _ = forward_loss(
+            model, loss_fn,
+            batch, device, ignore_idx,
+            compute_mrr=False
+        )
         loss.backward()
         total_loss += float(loss.item())
         total_nll_loss += float(nll_loss.item())
