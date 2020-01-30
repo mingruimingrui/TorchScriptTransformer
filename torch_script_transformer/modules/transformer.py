@@ -19,6 +19,8 @@ class TransformerModel(torch.nn.Module):
     def __init__(self, args, encoder, decoder):
         super().__init__()
         self.args = args
+        assert isinstance(encoder, TransformerEncoder)
+        assert isinstance(decoder, TransformerDecoder)
         self.encoder = encoder
         self.decoder = decoder
 
@@ -236,12 +238,12 @@ class TransformerDecoder(torch.nn.Module):
         super().__init__()
 
         assert len(dictionary) == embed_tokens.num_embeddings
+        assert dictionary.pad_index == embed_tokens.padding_idx
 
         embed_dim = args.embed_dim
-        token_embed_dim = embed_tokens.embedding_dim
 
         self.dropout = args.dropout
-        self.padding_idx = embed_tokens.padding_idx
+        self.padding_idx = dictionary.pad_index
         self.max_target_positions = args.max_target_positions
         # self.share_input_output_embed = args.share_decoder_input_output_embed
 
