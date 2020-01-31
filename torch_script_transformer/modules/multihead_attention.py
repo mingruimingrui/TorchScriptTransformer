@@ -57,10 +57,10 @@ class MultiheadAttention(torch.nn.Module):
         if key_padding_mask is not None:
             attn_weights = attn_weights.view(
                 bsz, self.num_heads, tgt_len, src_len)
-            attn_weights = attn_weights.float().masked_fill(
+            attn_weights = attn_weights.masked_fill(
                 key_padding_mask.unsqueeze(1).unsqueeze(2),
                 float('-inf')
-            ).type_as(attn_weights)
+            )
             attn_weights = attn_weights.view(
                 bsz * self.num_heads, tgt_len, src_len)
 
@@ -107,8 +107,8 @@ class MultiheadAttention(torch.nn.Module):
 
         else:
             k, v = saved_state
-            k = k.view(bsz * self.num_heads, -1, self.head_dim)
-            v = v.view(bsz * self.num_heads, -1, self.head_dim)
+            k = k.contiguous().view(bsz * self.num_heads, -1, self.head_dim)
+            v = v.contiguous().view(bsz * self.num_heads, -1, self.head_dim)
 
         src_len = k.size(1)
 

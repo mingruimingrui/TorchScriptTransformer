@@ -218,19 +218,6 @@ class TransformerEncoder(torch.nn.Module):
 
         return x, encoder_padding_mask
 
-    def reorder_encoder_out(
-        self,
-        encoder_out,
-        encoder_padding_mask,
-        new_order
-    ):
-        # type: (Tensor, Optional[Tensor], Tensor) -> Tuple[Tensor, Optional[Tensor]]
-        encoder_out = encoder_out.index_select(1, new_order)
-        if encoder_padding_mask is not None:
-            encoder_padding_mask = \
-                encoder_padding_mask.index_select(0, new_order)
-        return encoder_out, encoder_padding_mask
-
 
 class TransformerDecoder(torch.nn.Module):
 
