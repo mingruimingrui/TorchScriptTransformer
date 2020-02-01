@@ -93,7 +93,7 @@ class BeamGenerator(torch.nn.Module):
 
     @torch.no_grad()
     def forward(self, src_tokens):
-        # type: (Tensor) -> Tuple[Tensor, Tensor]
+        # type: (Tensor) -> Tuple[Tensor, Tensor, Tensor]
 
         device = src_tokens.device
         beam_size = self.beam_size
@@ -190,10 +190,11 @@ class BeamGenerator(torch.nn.Module):
             fin_pos = out_tokens[:, step_nb + 1].eq(self.eos_idx)
 
         # Form into (batch_size, beam_size, tgt_len)
-        out_tokens = out_tokens.reshape(bsz, beam_size, -1)
-        out_scores = out_scores.reshape(bsz, beam_size, -1)
+        out_tokens = out_tokens.view(bsz, beam_size, -1)
+        out_scores = out_scores.view(bsz, beam_size, -1)
+        out_sent_scores = out_sent_scores.view(bsz, beam_size)
 
-        return out_tokens, out_scores
+        return out_tokens, out_scores, out_sent_scores
 
     def determine_max_tgt_len(self, src_len):
         # type: (int) -> int
@@ -234,7 +235,7 @@ class BeamGenerator(torch.nn.Module):
         instead of the sentence scores suggested by Wu et. al
         https://arxiv.org/abs/1609.08144
 
-        S(Y|X) = P(Y|X) / lp(Y)
+        S(Y|X) = log(P(Y|X)) / lp(Y)
         lp(Y) = |Y| ** (len_penalty - 1.0)
 
         This function returns |Y| * lp(Y) = |Y| ** len_penalty
