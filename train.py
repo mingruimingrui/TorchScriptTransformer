@@ -21,7 +21,7 @@ class Meter(dict):
     def __repr__(self):
         return json.dumps({
             k: ('{:.3g}'.format(v) if isinstance(v, float) else v)
-            for k, v in self.metrics.items()
+            for k, v in self.items()
         })
 
 
@@ -289,7 +289,7 @@ def forward_loss(model, loss_fn, batch, device, ignore_idx, compute_mrr=False):
     mean_mrr = None
     if compute_mrr:
         mrr = logits.argsort(dim=-1).gather(-1, labels.unsqueeze(-1))
-        mean_mrr = mrr.mean()
+        mean_mrr = mrr.float().mean()
 
     return loss, nll_loss, mean_mrr
 
