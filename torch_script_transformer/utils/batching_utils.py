@@ -61,9 +61,13 @@ def form_batches(
     # cur_batch only contain indexes at the moment
     # Manipulate into batches
     # cur_batch: List[Tuple[batch_idxs, token_tensor]]
-    all_batches = [(batch_idxs, pad_token_ids(
-        [list_token_ids[i] for i in batch_idxs],
-        pad_idx, pad_left=pad_left
-    )) for batch_idxs in all_batches]
+    all_batches = [(
+        batch_idxs,
+        pad_token_ids(
+            [list_token_ids[i] for i in batch_idxs],
+            pad_idx, pad_left=pad_left
+        ),
+        [len(list_token_ids[i]) for i in batch_idxs]
+    ) for batch_idxs in all_batches]
 
     return all_batches, ignored_idxs
