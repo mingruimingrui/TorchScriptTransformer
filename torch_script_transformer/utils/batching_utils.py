@@ -31,7 +31,6 @@ def form_batches(
     idxs = list(range(len(list_token_ids)))
     if do_optimal_batching:
         idxs.sort(key=lambda i: len(list_token_ids[i]))
-    list_token_ids = [list_token_ids[i] for i in idxs]
 
     # Identify idxs for each batch
     ignored_idxs = []
