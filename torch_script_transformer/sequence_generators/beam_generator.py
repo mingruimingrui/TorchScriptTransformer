@@ -3,7 +3,6 @@ from __future__ import absolute_import, unicode_literals
 import torch
 from torch import Tensor
 from typing import Tuple, List, Optional
-from torch_script_transformer.modules.transformer import TransformerModel
 from torch_script_transformer.data.dictionary import Dictionary
 
 
@@ -43,7 +42,6 @@ class BeamGenerator(torch.nn.Module):
                 bos instead of eos. (default: False)
         """
         super().__init__()
-        assert isinstance(model, TransformerModel)
         assert isinstance(tgt_dict, Dictionary)
 
         self.model = model
@@ -214,14 +212,14 @@ class BeamGenerator(torch.nn.Module):
     def determine_cands(self, logits):
         # type: (Tensor) -> Tuple[Tensor, Tensor]
         logits = logits[:, -1].float()  # Only interested in last pred
+        lprobs = logits.log_softmax(dim=-1)
 
         # Never predict pad
-        logits[:, self.pad_idx] = self.neg_inf
+        lprobs[:, self.pad_idx] = self.neg_inf
         # Apply unk penalty
-        logits[:, self.unk_idx] -= self.unk_penalty
+        lprobs[:, self.unk_idx] -= self.unk_penalty
 
-        # Compute softmax and get top k
-        lprobs = logits.log_softmax(dim=-1)
+        # Get top k
         cand_scores, cand_tokens = lprobs.topk(k=self.beam_size, largest=True)
         return cand_scores, cand_tokens
 
