@@ -1,5 +1,7 @@
 #!/usr/bin/env python
 
+""" Script for inference, evaluation and interactive inference """
+
 from __future__ import absolute_import, unicode_literals
 
 import sys
@@ -19,7 +21,10 @@ ATTY_STOP_WORDS = {'q', 'quit', 'quit()', 'exit', 'exit()'}
 
 
 def make_parser():
-    parser = argparse.ArgumentParser()
+    parser = argparse.ArgumentParser(
+        'Script for inference, evaluation and interactive inference.'
+        ' To perform interactive inference, do not use --input --output flags'
+        ' and do not pipe anything into stdin.')
 
     parser.add_argument(
         'checkpoint_file', type=str, metavar='FP',
@@ -244,7 +249,8 @@ def load_model_and_sequence_generator(args, src_dict, tgt_dict):
     # Especially noticible when using JIT
     dummy_input = torch.zeros(1, args.max_src_len).long()
     dummy_input[0, -1] = src_dict.eos_index
-    sequence_generator(dummy_input.to(get_device(args)))
+    with torch.no_grad():
+        sequence_generator(dummy_input.to(get_device(args)))
 
     return model, sequence_generator
 
