@@ -23,7 +23,7 @@ class BeamGenerator(torch.nn.Module):
         max_len=None, max_len_a=1.4, max_len_b=4.0,
         len_penalty=1.0, unk_penalty=0.0,
         no_repeat_ngram_size=0,
-        init_out_tokens_with_eos=False
+        init_out_w_bos=False
     ):
         """
         Args:
@@ -39,18 +39,14 @@ class BeamGenerator(torch.nn.Module):
                 < 0 produces more unk. (default: 1.0)
             no_repeat_ngram_size: tokens will not be repeated this many
                 times consecutively. 0 means unrestricted. (default: 0)
-            init_out_tokens_with_eos: out_tokens will start with
-                eos instead of bos. (default: False)
+            init_out_w_bos: out_tokens will start with
+                bos instead of eos. (default: False)
         """
         super().__init__()
         assert isinstance(model, TransformerModel)
         assert isinstance(tgt_dict, Dictionary)
 
         self.model = model
-        # self.bos_idx = torch.LongTensor([tgt_dict.bos_index])[0]
-        # self.pad_idx = torch.LongTensor([tgt_dict.pad_index])[0]
-        # self.unk_idx = torch.LongTensor([tgt_dict.unk_index])[0]
-        # self.eos_idx = torch.LongTensor([tgt_dict.eos_index])[0]
         self.register_buffer(
             'bos_idx',
             torch.LongTensor([tgt_dict.bos_index])[0]
@@ -86,7 +82,7 @@ class BeamGenerator(torch.nn.Module):
         self.register_buffer('neg_inf', torch.FloatTensor([float('-inf')])[0])
 
         self.no_repeat_ngram_size = no_repeat_ngram_size
-        self.init_out_tokens_with_eos = init_out_tokens_with_eos
+        self.init_out_w_bos = init_out_w_bos
 
     def half(self):
         self.model.half()
@@ -209,10 +205,10 @@ class BeamGenerator(torch.nn.Module):
             bsz, max_tgt_len + 1, dtype=torch.long).fill_(self.pad_idx)
         out_scores = torch.zeros(
             bsz, max_tgt_len, dtype=torch.float32).fill_(self.neg_inf)
-        if self.init_out_tokens_with_eos:
-            out_tokens[:, 0] = self.eos_idx
-        else:
+        if self.init_out_w_bos:
             out_tokens[:, 0] = self.bos_idx
+        else:
+            out_tokens[:, 0] = self.eos_idx
         return out_tokens, out_scores
 
     def determine_cands(self, logits):

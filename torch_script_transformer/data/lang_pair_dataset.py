@@ -142,7 +142,7 @@ class LangPairDataset(object):
         src_max_pos=1024, tgt_max_pos=1024,
         src_prepend_bos=False, src_append_eos=True,
         tgt_prepend_bos=True, tgt_append_eos=True,
-        tgt_replace_bos_w_eos=False,
+        tgt_replace_bos_w_eos=True,
         src_pad_left=True, tgt_pad_left=False
     ):
         filepaths = []

@@ -117,8 +117,8 @@ def make_parser():
         '--no_repeat_ngram_size', type=int, metavar='N', default=0,
         help='Not currently implemented')
     translation_configs.add_argument(
-        '--init_out_tokens_with_eos', action='store_true',
-        help='Target sequence starts with EOS instead of BOS')
+        '--init_out_w_bos', action='store_true',
+        help='Target sequence starts with BOS instead of EOS')
 
     translation_configs.add_argument(
         '--max_batch_tokens', type=int, default=24576,
@@ -235,7 +235,7 @@ def load_model_and_sequence_generator(args, src_dict, tgt_dict):
         len_penalty=args.len_penalty,
         unk_penalty=args.unk_penalty,
         no_repeat_ngram_size=args.no_repeat_ngram_size,
-        init_out_tokens_with_eos=args.init_out_tokens_with_eos
+        init_out_w_bos=args.init_out_w_bos
     )
     sequence_generator.eval()
 
@@ -396,7 +396,7 @@ def main(args):
         tokenize=args.sacrebleu_tokenizer,
         use_effective_order=True
     )
-    print(bleu_score.format())
+    sys.stderr.write(bleu_score.format() + '\n')
 
 
 if __name__ == "__main__":
