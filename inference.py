@@ -21,10 +21,7 @@ ATTY_STOP_WORDS = {'q', 'quit', 'quit()', 'exit', 'exit()'}
 
 
 def make_parser():
-    parser = argparse.ArgumentParser(
-        'Script for inference, evaluation and interactive inference.'
-        ' To perform interactive inference, do not use --input --output flags'
-        ' and do not pipe anything into stdin.')
+    parser = argparse.ArgumentParser()
 
     parser.add_argument(
         'checkpoint_file', type=str, metavar='FP',
