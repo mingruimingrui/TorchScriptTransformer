@@ -10,6 +10,7 @@ from time import time
 from tqdm import tqdm
 
 import torch
+import numpy as np
 
 from torch_script_transformer.utils import \
     file_utils, generator_utils, batching_utils
@@ -53,15 +54,19 @@ def make_parser():
         help='The tokenizer that sacrebleu use for evaluation')
 
     parser.add_argument(
+        '--chunk_size', type=int, default=8192,
+        help='The chunk size that sentences should be read and processed'
+        ' (default: 8192)')
+
+    parser.add_argument(
+        '--show_resp_time', action='store_true',
+        help='Record and show response time statistics.')
+    parser.add_argument(
         '--show_pbar', action='store_true',
         help='Show process bar')
     parser.add_argument(
         '--input_size', type=int,
         help='The input file size, only used for progress bar')
-    parser.add_argument(
-        '--chunk_size', type=int, default=8192,
-        help='The chunk size that sentences should be read and processed'
-        ' (default: 8192)')
 
     parser.add_argument(
         '--cpu', action='store_true')
@@ -308,7 +313,10 @@ def main(args):
     if args.reference_file:
         preds = []
 
-    # is_first = True
+    resp_times = None
+    if args.show_resp_time:
+        resp_times = []
+
     time_taken = 1e-3
     total_trans_sents = 0
     total_trans_tokens = 0
@@ -326,7 +334,10 @@ def main(args):
             t0 = time()
             out_tokens, _, out_sent_scores = \
                 sequence_generator(src_tokens.to(device))
-            time_taken += time() - t0
+            t1 = time()
+            time_taken += t1 - t0
+            if resp_times is not None:
+                resp_times.append(t1 - t0)
 
             # Select top hypothesis
             out_tokens = out_tokens[:, 0].cpu()
@@ -362,6 +373,10 @@ def main(args):
     msg = 'Translation speed: {:.1f} sents/s - {:.1f} tokens/s\n'.format(
         total_trans_sents / time_taken, total_trans_tokens / time_taken)
     sys.stderr.write(msg)
+    if resp_times:
+        msg = 'Response time: {:.1f} ms - Median: {:.1f} ms'.format(
+            1000 * np.mean(resp_times), 1000 * np.median(resp_times))
+        sys.stderr.write(msg)
 
     if not args.reference_file:
         return
