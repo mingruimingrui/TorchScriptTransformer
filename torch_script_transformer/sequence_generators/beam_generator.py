@@ -242,9 +242,6 @@ class BeamGenerator(torch.nn.Module):
         """
         return tgt_len ** self.len_penalty
 
-    # def finalize_hypots(self, finalized, sent_order, out_tokens, out_scores, out_sent_scores):
-    #     ''
-
     def reorder_encoder_outs(
         self, new_order, encoder_out, encoder_padding_mask
     ):
