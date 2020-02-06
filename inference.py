@@ -118,7 +118,7 @@ def make_parser():
         help='Target sequence starts with BOS instead of EOS')
 
     translation_configs.add_argument(
-        '--max_batch_tokens', type=int, default=24576,
+        '--max_batch_tokens', type=int, default=12000,
         help='The maximum number of tokens per batch.')
     translation_configs.add_argument(
         '--max_batch_sents', type=int, default=256,
@@ -218,11 +218,13 @@ def load_model(args, src_dict, tgt_dict):
 def load_model_and_sequence_generator(args, src_dict, tgt_dict):
     from torch_script_transformer.utils.checkpoint_utils \
         import CheckpointManager
-    from torch_script_transformer.sequence_generators.beam_generator \
+    from torch_script_transformer.sequence_generators.beam_generator3 \
         import BeamGenerator
 
     model, _, _ = CheckpointManager.load(
         args.checkpoint_file, src_dict, tgt_dict)
+    # if args.jit:
+    #     model = torch.jit.script(model)
     sequence_generator = BeamGenerator(
         model, tgt_dict,
         beam_size=args.beam_size,
@@ -273,6 +275,7 @@ def main(args):
         input_stream, chunk_size=args.chunk_size)
 
     def preprocess_text(text):
+        text = text.strip()
         text = tokenizer.tokenize(
             text=text,
             aggressive_dash_splits=args.aggressive_dash_splits,
@@ -320,6 +323,7 @@ def main(args):
     if args.show_resp_time:
         resp_times = []
 
+    model_not_initialized = True
     time_taken = 1e-3
     total_trans_sents = 0
     total_trans_tokens = 0
@@ -334,8 +338,12 @@ def main(args):
             total_trans_sents += len(src_lengths)
             total_trans_tokens += sum(src_lengths)
 
+            if model_not_initialized:
+                all_sent_hypots = sequence_generator(src_tokens.to(device))
+                model_not_initialized = False
+
             t0 = time()
-            out_tokens, _, out_sent_scores = \
+            all_sent_hypots = \
                 sequence_generator(src_tokens.to(device))
             t1 = time()
             time_taken += t1 - t0
@@ -343,11 +351,13 @@ def main(args):
                 resp_times.append(t1 - t0)
 
             # Select top hypothesis
-            out_tokens = out_tokens[:, 0].cpu()
-            out_sent_scores = out_sent_scores[:, 0].cpu()
-
-            for i, token_ids, score in zip(idxs, out_tokens, out_sent_scores):
-                results[i] = (math.exp(score), postprocess_text(token_ids))
+            for i, hypots in zip(idxs, all_sent_hypots):
+                hypots.sort(key=lambda x: x[2], reverse=True)
+                best_hypot = hypots[0]
+                results[i] = (
+                    math.exp(best_hypot[2]),
+                    postprocess_text(best_hypot[0].cpu())
+                )
 
         # Account for ignored idxs
         pbar.update(len(ignored_idxs))
@@ -377,7 +387,7 @@ def main(args):
         total_trans_sents / time_taken, total_trans_tokens / time_taken)
     sys.stderr.write(msg)
     if resp_times:
-        msg = 'Response time: {:.1f} ms - Median: {:.1f} ms'.format(
+        msg = 'Response time: {:.1f} ms - Median: {:.1f} ms\n'.format(
             1000 * np.mean(resp_times), 1000 * np.median(resp_times))
         sys.stderr.write(msg)
 
