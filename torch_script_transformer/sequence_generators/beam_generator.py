@@ -87,7 +87,7 @@ class BeamGenerator(torch.nn.Module):
 
     @torch.no_grad()
     def forward(self, src_tokens):
-        # type: (Tensor) -> Tuple[Tensor, Tensor, Tensor]
+        # type: (Tensor) -> List[Optional[Tuple[Tensor, Tensor, Tensor]]]
 
         device = src_tokens.device
         beam_size = self.beam_size
@@ -96,6 +96,7 @@ class BeamGenerator(torch.nn.Module):
         max_tgt_len = self.determine_max_tgt_len(src_len)
 
         # Forward encoder
+        # encoder_padding_mask = torch.jit.annotate(Optional[Tensor], None)
         encoder_out, encoder_padding_mask = \
             self.model.forward_encoder(src_tokens)
 
@@ -117,16 +118,25 @@ class BeamGenerator(torch.nn.Module):
         cand_scores, cand_tokens = self.determine_cands(logits)
 
         # Perform reordering and insert first tokens
-        sent_order = torch.arange(bsz, dtype=torch.long) \
+        sent_order = torch.arange(bsz, dtype=torch.long)
+        new_order = sent_order \
             .view(-1, 1) \
             .repeat(1, beam_size) \
             .view(-1).to(device)
         encoder_out, encoder_padding_mask = self.reorder_encoder_outs(
-            sent_order, encoder_out, encoder_padding_mask)
+            new_order, encoder_out, encoder_padding_mask)
         incremental_state = \
-            self.reorder_incremental_state(sent_order, incremental_state)
+            self.reorder_incremental_state(new_order, incremental_state)
         out_tokens, out_scores = \
-            self.reorder_output_buffer(sent_order, out_tokens, out_scores)
+            self.reorder_output_buffer(new_order, out_tokens, out_scores)
+
+        num_sent_remaining = bsz
+        finalized = torch.jit.annotate(
+            List[Optional[Tuple[Tensor, Tensor, Tensor]]],
+            []
+        )
+        for i in range(bsz):
+            finalized.append(None)
 
         out_tokens[:, 1] = cand_tokens.view(-1)
         out_scores[:, 0] = cand_scores.view(-1)
@@ -134,8 +144,48 @@ class BeamGenerator(torch.nn.Module):
         fin_pos = out_tokens[:, 1].eq(self.eos_idx)
 
         for step_nb in range(1, max_tgt_len):
+            # Reorder and finalize
+            sent_fin_pos = fin_pos.view(-1, beam_size).all(-1)
+            sent_fin_idxs = torch.where(sent_fin_pos)[0]
+            if sent_fin_idxs.numel() > 0:
+                fin_tokens = out_tokens.view(
+                    -1, beam_size, max_tgt_len + 1)[sent_fin_idxs]
+                fin_scores = out_scores.view(
+                    -1, beam_size, max_tgt_len)[sent_fin_idxs]
+                fin_sent_scores = out_sent_scores.view(
+                    -1, beam_size)[sent_fin_idxs]
+
+                for i in range(sent_fin_idxs.size(0)):
+                    hypot_order = (-fin_sent_scores[i].abs()) \
+                        .argsort(descending=True)
+                    finalized[sent_order[sent_fin_idxs[i]]] = (
+                        fin_tokens[i][hypot_order],
+                        fin_scores[i][hypot_order],
+                        -fin_sent_scores[i][hypot_order].abs()
+                    )
+                    # finalized[sent_order[sent_fin_idxs[i]]] = (
+                    #     fin_tokens[i],
+                    #     fin_scores[i],
+                    #     fin_sent_scores[i].abs()
+                    # )
+                    num_sent_remaining -= 1
+
+                sent_unfin_pos = ~sent_fin_pos
+                sent_order = sent_order[sent_unfin_pos]
+                new_order = torch.where(
+                    (sent_unfin_pos).view(-1, 1).repeat(1, beam_size).view(-1)
+                )[0]
+                fin_pos = fin_pos[new_order]
+                encoder_out, encoder_padding_mask = self.reorder_encoder_outs(
+                    new_order, encoder_out, encoder_padding_mask)
+                incremental_state = self.reorder_incremental_state(
+                    new_order, incremental_state)
+                out_tokens, out_scores = self.reorder_output_buffer(
+                    new_order, out_tokens, out_scores)
+                out_sent_scores = out_sent_scores[new_order]
+
             # Early exit if all are done
-            if fin_pos.all():
+            if num_sent_remaining == 0:
                 break
 
             # Do decoding to get candidates
@@ -146,6 +196,7 @@ class BeamGenerator(torch.nn.Module):
                 incremental_state=incremental_state,
                 need_attn=False
             )
+            # print('logits', logits.shape)
             cand_scores, cand_tokens = self.determine_cands(logits)
             cand_scores += out_scores[:, step_nb - 1].unsqueeze(-1)
             cand_sent_scores = cand_scores / self.get_score_norm(step_nb + 1)
@@ -154,13 +205,12 @@ class BeamGenerator(torch.nn.Module):
             cand_tokens[fin_pos] = self.eos_idx
             cand_scores[fin_pos] = self.neg_inf
             cand_sent_scores[fin_pos, 1:] = self.neg_inf
-            cand_sent_scores[fin_pos, 0] = out_sent_scores[fin_pos]
+            cand_sent_scores[fin_pos, 0] = out_sent_scores[fin_pos].abs()
 
             # [bsz * beam_size, beam_size] -> [bsz, beam_size ** 2]
-            cand_tokens = cand_tokens.view(bsz, beam_size_sq)
-            cand_scores = cand_scores.view(bsz, beam_size_sq)
-            cand_sent_scores = cand_sent_scores.view(bsz, beam_size_sq)
-            # print(cand_sent_scores)
+            cand_tokens = cand_tokens.view(-1, beam_size_sq)
+            cand_scores = cand_scores.view(-1, beam_size_sq)
+            cand_sent_scores = cand_sent_scores.view(-1, beam_size_sq)
 
             # Sort to get top candidates
             cand_sent_scores, top_cands = \
@@ -168,27 +218,50 @@ class BeamGenerator(torch.nn.Module):
             cand_sent_scores = cand_sent_scores.view(-1)
             cand_tokens = cand_tokens.gather(1, top_cands).view(-1)
             cand_scores = cand_scores.gather(1, top_cands).view(-1)
-            new_order = top_cands.view(-1) / beam_size + sent_order * beam_size
+            new_order = torch.arange(num_sent_remaining, dtype=torch.long) \
+                .view(-1, 1) \
+                .repeat(1, beam_size) \
+                .view(-1).to(device) * beam_size + \
+                top_cands.view(-1) / beam_size
 
             # Reorder and insert candidates
             encoder_out, encoder_padding_mask = self.reorder_encoder_outs(
                 new_order, encoder_out, encoder_padding_mask)
-            incremental_state = \
-                self.reorder_incremental_state(new_order, incremental_state)
-            out_tokens, out_scores = \
-                self.reorder_output_buffer(new_order, out_tokens, out_scores)
+            incremental_state = self.reorder_incremental_state(
+                new_order, incremental_state)
+            out_tokens, out_scores = self.reorder_output_buffer(
+                new_order, out_tokens, out_scores)
             out_tokens[:, step_nb + 1] = cand_tokens
             out_scores[:, step_nb] = cand_scores
             out_sent_scores = cand_sent_scores
 
             fin_pos = out_tokens[:, step_nb + 1].eq(self.eos_idx)
 
-        # Form into (batch_size, beam_size, tgt_len)
-        out_tokens = out_tokens.view(bsz, beam_size, -1)
-        out_scores = out_scores.view(bsz, beam_size, -1)
-        out_sent_scores = out_sent_scores.view(bsz, beam_size)
+        # Finish remaining sentences
+        if num_sent_remaining > 0:
+            fin_tokens = out_tokens.view(
+                -1, beam_size, max_tgt_len + 1)
+            fin_scores = out_scores.view(
+                -1, beam_size, max_tgt_len)
+            fin_sent_scores = out_sent_scores.view(
+                -1, beam_size)
 
-        return out_tokens, out_scores, out_sent_scores
+            for i in range(sent_order.size(0)):
+                finalized[sent_order[i]] = (
+                    fin_tokens[i],
+                    fin_scores[i],
+                    fin_sent_scores[i]
+                )
+
+        return finalized
+
+        # Form into (batch_size, beam_size, tgt_len)
+
+        # out_tokens = out_tokens.view(bsz, beam_size, -1)
+        # out_scores = out_scores.view(bsz, beam_size, -1)
+        # out_sent_scores = out_sent_scores.view(bsz, beam_size)
+
+        # return out_tokens, out_scores, out_sent_scores
 
     def determine_max_tgt_len(self, src_len):
         # type: (int) -> int
@@ -234,7 +307,7 @@ class BeamGenerator(torch.nn.Module):
 
         This function returns |Y| * lp(Y) = |Y| ** len_penalty
         """
-        return tgt_len ** self.len_penalty
+        return (tgt_len + 1) ** self.len_penalty
 
     def reorder_encoder_outs(
         self, new_order, encoder_out, encoder_padding_mask
@@ -281,3 +354,8 @@ class BeamGenerator(torch.nn.Module):
         out_tokens = out_tokens[new_order]
         out_scores = out_scores[new_order]
         return out_tokens, out_scores
+
+
+# def np_style_1d_repeat(tensor, N):
+#     # type: (Tensor, int) -> Tensor
+#     return tensor.view(-1, 1).repeat(1, N).view(-1)
