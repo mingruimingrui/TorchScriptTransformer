@@ -484,7 +484,7 @@ def main(args):
         if should_save:
             chekcpoint_manager.save(update_nb)
 
-    time_taken = time() - start_time()
+    time_taken = time() - start_time
     print('Training done in {:.1f}s'.format(time_taken))
 
 
