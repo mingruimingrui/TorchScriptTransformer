@@ -14,7 +14,7 @@ from tqdm import tqdm
 
 import torch
 from tensorboardX import SummaryWriter
-from torch_script_transformer.utils.checkpoint_utils import CheckpointManager
+from torch_script_transformer.utils import checkpoint_utils
 
 
 class Meter(dict):
@@ -205,7 +205,7 @@ def load_or_make_model(args, src_dict, tgt_dict):
     from torch_script_transformer.modules.transformer import TransformerModel
 
     if args.init_checkpoint_path:
-        model, _, _ = CheckpointManager.load(
+        model, _ = checkpoint_utils.load_checkpoint(
             args.init_checkpoint_path, src_dict, tgt_dict)
     else:
         model = TransformerModel.build_model(args, src_dict, tgt_dict)
@@ -448,7 +448,7 @@ def main(args):
     metrics = Meter()
     writer = SummaryWriter(os.path.join(args.checkpoint_dir, 'train'))
     valid_writer = SummaryWriter(os.path.join(args.checkpoint_dir, 'valid'))
-    chekcpoint_manager = CheckpointManager(
+    chekcpoint_manager = checkpoint_utils.CheckpointManager(
         args.checkpoint_dir, model, keep_nb=args.keep_interval)
     pbar = tqdm(total=args.max_update, ncols=80)
 

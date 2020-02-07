@@ -207,10 +207,8 @@ def load_dictionary(args):
 
 
 def load_model(args, src_dict, tgt_dict):
-    from torch_script_transformer.utils.checkpoint_utils \
-        import CheckpointManager
-    model, _, _ = \
-        CheckpointManager.load(args.checkpoint_file, src_dict, tgt_dict)
+    from torch_script_transformer.utils.checkpoint_utils import load_checkpoint
+    model, _ = load_checkpoint(args.checkpoint_file, src_dict, tgt_dict)
     model = model.eval()
     return model
 
