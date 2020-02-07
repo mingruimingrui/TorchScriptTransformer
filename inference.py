@@ -206,21 +206,12 @@ def load_dictionary(args):
     return src_dict, tgt_dict
 
 
-def load_model(args, src_dict, tgt_dict):
-    from torch_script_transformer.utils.checkpoint_utils import load_checkpoint
-    model, _ = load_checkpoint(args.checkpoint_file, src_dict, tgt_dict)
-    model = model.eval()
-    return model
-
-
 def load_model_and_sequence_generator(args, src_dict, tgt_dict):
-    from torch_script_transformer.utils.checkpoint_utils \
-        import CheckpointManager
+    from torch_script_transformer.utils.checkpoint_utils import load_checkpoint
     from torch_script_transformer.sequence_generators.beam_generator3 \
         import BeamGenerator
 
-    model, _, _ = CheckpointManager.load(
-        args.checkpoint_file, src_dict, tgt_dict)
+    model, _ = load_checkpoint(args.checkpoint_file, src_dict, tgt_dict)
     # if args.jit:
     #     model = torch.jit.script(model)
     sequence_generator = BeamGenerator(
