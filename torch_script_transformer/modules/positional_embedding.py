@@ -9,17 +9,11 @@ import torch
 from torch import Tensor
 from typing import Optional
 
-DEFAULT_OFFSET = 1  # For compliance with fairseq
-
 
 class LearnedPositionalEmbedding(torch.nn.Embedding):
 
-    def __init__(
-        self, num_embeddings, embedding_dim, padding_idx,
-        offset=DEFAULT_OFFSET
-    ):
-        num_embeddings += self.offset + 1
-        self.offset = offset
+    def __init__(self, num_positions, embedding_dim, padding_idx):
+        num_embeddings = num_positions + padding_idx + 1
         super().__init__(num_embeddings, embedding_dim)
 
     def reset_parameters(self):
@@ -30,21 +24,17 @@ class LearnedPositionalEmbedding(torch.nn.Embedding):
         # type: (Tensor, Optional[int]) -> Tensor
         if start is None:
             start = 0
-        offset = self.offset + start
+        offset = self.padding_idx + start
         positions = make_positions(input_tokens, self.padding_idx) + offset
         return super().forward(positions).detach()
 
 
 class SinusoidalPositionalEmbedding(torch.nn.Module):
 
-    def __init__(
-        self, num_embeddings, embedding_dim, padding_idx,
-        offset=DEFAULT_OFFSET
-    ):
+    def __init__(self, num_positions, embedding_dim, padding_idx):
         super().__init__()
 
-        num_embeddings += offset + 1
-        self.offset = offset
+        num_embeddings = num_positions + padding_idx + 1
         self.num_embeddings = num_embeddings
         self.embedding_dim = embedding_dim
         self.padding_idx = padding_idx
@@ -55,23 +45,23 @@ class SinusoidalPositionalEmbedding(torch.nn.Module):
         # type: (Tensor, Optional[int]) -> Tensor
         if start is None:
             start = 0
-        offset = self.offset + start
+        offset = self.padding_idx + start
         positions = make_positions(input_tokens, self.padding_idx) + offset
         return torch.nn.functional.embedding(positions, self.weight).detach()
 
 
 def PositionalEmbedding(
-    num_embeddings,
+    num_positions,
     embedding_dim,
     padding_idx,
     learned=False
 ):
     if learned:
         m = LearnedPositionalEmbedding(
-            num_embeddings, embedding_dim, padding_idx)
+            num_positions, embedding_dim, padding_idx)
     else:
         m = SinusoidalPositionalEmbedding(
-            num_embeddings, embedding_dim, padding_idx)
+            num_positions, embedding_dim, padding_idx)
     return m
 
 

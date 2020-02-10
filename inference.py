@@ -206,23 +206,12 @@ def load_dictionary(args):
     return src_dict, tgt_dict
 
 
-def load_model(args, src_dict, tgt_dict):
-    from torch_script_transformer.utils.checkpoint_utils \
-        import CheckpointManager
-    model, _, _ = \
-        CheckpointManager.load(args.checkpoint_file, src_dict, tgt_dict)
-    model = model.eval()
-    return model
-
-
 def load_model_and_sequence_generator(args, src_dict, tgt_dict):
-    from torch_script_transformer.utils.checkpoint_utils \
-        import CheckpointManager
-    from torch_script_transformer.sequence_generators.beam_generator3 \
+    from torch_script_transformer.utils.checkpoint_utils import load_checkpoint
+    from torch_script_transformer.sequence_generators.beam_generator \
         import BeamGenerator
 
-    model, _, _ = CheckpointManager.load(
-        args.checkpoint_file, src_dict, tgt_dict)
+    model, _ = load_checkpoint(args.checkpoint_file, src_dict, tgt_dict)
     # if args.jit:
     #     model = torch.jit.script(model)
     sequence_generator = BeamGenerator(
@@ -279,6 +268,7 @@ def main(args):
         text = tokenizer.tokenize(
             text=text,
             aggressive_dash_splits=args.aggressive_dash_splits,
+            escape=True,
             return_str=True
         )
         text = src_bpe_model.process_line(text)
@@ -346,17 +336,22 @@ def main(args):
             all_sent_hypots = \
                 sequence_generator(src_tokens.to(device))
             t1 = time()
+
             time_taken += t1 - t0
             if resp_times is not None:
                 resp_times.append(t1 - t0)
 
             # Select top hypothesis
             for i, hypots in zip(idxs, all_sent_hypots):
-                hypots.sort(key=lambda x: x[2], reverse=True)
-                best_hypot = hypots[0]
+                # hypots.sort(key=lambda x: x[2], reverse=True)
+                # best_hypot = hypots[0]
+                # results[i] = (
+                #     math.exp(best_hypot[2]),
+                #     postprocess_text(best_hypot[0].cpu())
+                # )
                 results[i] = (
-                    math.exp(best_hypot[2]),
-                    postprocess_text(best_hypot[0].cpu())
+                    math.exp(hypots[2][0]),
+                    postprocess_text(hypots[0][0])
                 )
 
         # Account for ignored idxs

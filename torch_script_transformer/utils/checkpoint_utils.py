@@ -49,21 +49,8 @@ class CheckpointManager(object):
         self.keep_nb = keep_nb
         self.save_as_fp16 = save_as_fp16
 
-        self.template = self.make_template(checkpoint_dir)
-        self.checkpoint_files = self.list_all_checkpoint_files(checkpoint_dir)
-
-    @staticmethod
-    def make_template(checkpoint_dir):
-        return os.path.join(checkpoint_dir, 'checkpoint-{}.pt')
-
-    @staticmethod
-    def list_all_checkpoint_files(checkpoint_dir):
-        template = CheckpointManager.make_template(checkpoint_dir)
-        all_files = glob.glob(template.format('*'))
-        file_pattern = re.compile(template.format('([0-9]+)'))
-        all_files = list(filter(lambda x: file_pattern.match(x), all_files))
-        all_files.sort(key=lambda x: int(file_pattern.match(x).group(1)))
-        return all_files
+        self.template = make_template(checkpoint_dir)
+        self.checkpoint_files = list_all_checkpoint_files(checkpoint_dir)
 
     def save(self, step_nb):
         assert isinstance(step_nb, int)
@@ -85,36 +72,45 @@ class CheckpointManager(object):
         torch.save(saveobj, savepath)
         shutil.copy(savepath, self.template.format('latest'))
         self.checkpoint_files = \
-            self.list_all_checkpoint_files(self.checkpoint_dir)
+            list_all_checkpoint_files(self.checkpoint_dir)
 
         # Delete if needed
         if self.keep_nb:
             for filepath in self.checkpoint_files[:-self.keep_nb]:
                 os.remove(filepath)
             self.checkpoint_files = \
-                self.list_all_checkpoint_files(self.checkpoint_dir)
+                list_all_checkpoint_files(self.checkpoint_dir)
 
-    @classmethod
-    def load(cls, checkpoint_dir_or_file, src_dict, tgt_dict, **kwargs):
-        """Load model from checkpoint_dir
-        Returns:
-            model, CheckpointManager, step_nb
-        """
-        if os.path.isfile(checkpoint_dir_or_file):
-            checkpoint_file = checkpoint_dir_or_file
-            checkpoint_dir = os.path.dirname(checkpoint_file)
-        else:
-            # Default to choosing latest
-            checkpoint_dir = checkpoint_dir_or_file
-            checkpoint_files = cls.list_all_checkpoint_files(checkpoint_dir)
-            assert len(checkpoint_files) > 0
-            checkpoint_file = checkpoint_files[-1]
 
-        savedobj = torch.load(checkpoint_file, map_location='cpu')
-        model = TransformerModel.build_model(
-            savedobj['model_args'], src_dict, tgt_dict)
-        model.load_state_dict(savedobj['model_state_dict'])
+def make_template(checkpoint_dir):
+    return os.path.join(checkpoint_dir, 'checkpoint-{}.pt')
 
-        step_nb = savedobj.get('step_nb', 0)
 
-        return model, cls(checkpoint_dir, model, **kwargs), step_nb
+def list_all_checkpoint_files(checkpoint_dir):
+    template = make_template(checkpoint_dir)
+    all_files = glob.glob(template.format('*'))
+    file_pattern = re.compile(template.format('([0-9]+)'))
+    all_files = list(filter(lambda x: file_pattern.match(x), all_files))
+    all_files.sort(key=lambda x: int(file_pattern.match(x).group(1)))
+    return all_files
+
+
+def load_checkpoint(checkpoint_dir_or_file, src_dict, tgt_dict):
+    if os.path.isfile(checkpoint_dir_or_file):
+        checkpoint_file = checkpoint_dir_or_file
+        checkpoint_dir = os.path.dirname(checkpoint_file)
+    else:
+        # Default to choosing latest
+        checkpoint_dir = checkpoint_dir_or_file
+        checkpoint_files = list_all_checkpoint_files(checkpoint_dir)
+        assert len(checkpoint_files) > 0
+        checkpoint_file = checkpoint_files[-1]
+
+    savedobj = torch.load(checkpoint_file, map_location='cpu')
+    step_nb = savedobj.get('step_nb', 0)
+
+    model = TransformerModel.build_model(
+        savedobj['model_args'], src_dict, tgt_dict)
+    model.load_state_dict(savedobj['model_state_dict'])
+
+    return model, step_nb

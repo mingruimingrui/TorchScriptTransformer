@@ -70,6 +70,20 @@ for ((i=0;i<${#URLS[@]};++i)); do
     fi
 done
 
+echo 'Extract testing data'
+for l in $src $tgt; do
+    if [ "$l" == "$src" ]; then
+        t="src"
+    else
+        t="ref"
+    fi
+    grep '<seg id' $RAW_DIR/test-full/newstest2014-deen-$t.$l.sgm | \
+        sed -e 's/<seg id="[0-9]*">\s*//g' | \
+        sed -e 's/\s*<\/seg>\s*//g' | \
+        sed -e "s/\’/\'/g" > $DATA_DIR/test.$lang.$l
+    echo ''
+done
+
 echo 'Preprocessing training data'
 for l in $src $tgt; do
     file=$TEMP_DIR/clean.$lang.tok.$l
@@ -77,7 +91,8 @@ for l in $src $tgt; do
     for f in "${CORPORA[@]}"; do
         cat $RAW_DIR/$f.$l | \
             sed -e 's/\r/ /g' | \
-            $NORM_PUNC -j $num_workers -l $l | \
+            $NORM_PUNC -j $num_workers -l $l \
+                --normalize-quote-commas --normalize-numbers | \
             $TOKENIZER -j $num_workers -a -l $l >> \
             $file
     done
@@ -90,9 +105,9 @@ $CLEAN --ratio 1.5 \
 
 echo 'Splitting train and valid...'
 for l in $src $tgt; do
-    awk '{if (NR%300 == 0)  print $0; }' $TEMP_DIR/filter.$lang.tok.$l \
+    awk '{if (NR%100 == 0)  print $0; }' $TEMP_DIR/filter.$lang.tok.$l \
         > $DATA_DIR/valid.$lang.tok.$l
-    awk '{if (NR%300 != 0)  print $0; }' $TEMP_DIR/filter.$lang.tok.$l \
+    awk '{if (NR%100 != 0)  print $0; }' $TEMP_DIR/filter.$lang.tok.$l \
         > $TEMP_DIR/train.$lang.tok.$l
     echo ''
 done
@@ -115,17 +130,3 @@ cat $DATA_DIR/train.$lang.tok.$src $DATA_DIR/train.$lang.tok.$tgt | \
     $LEARN_VOCAB --threshold 20 --nwords $num_bpe_tokens --show_pbar \
     > $DATA_DIR/dict.$lang.$src
 cp $DATA_DIR/dict.$lang.$src $DATA_DIR/dict.$lang.$tgt
-
-echo 'Extract testing data'
-for l in $src $tgt; do
-    if [ "$l" == "$src" ]; then
-        t="src"
-    else
-        t="ref"
-    fi
-    grep '<seg id' $RAW_DIR/test-full/newstest2014-deen-$t.$l.sgm | \
-        sed -e 's/<seg id="[0-9]*">\s*//g' | \
-        sed -e 's/\s*<\/seg>\s*//g' | \
-        sed -e "s/\’/\'/g" > $DATA_DIR/test.$lang.$l
-    echo ''
-done
