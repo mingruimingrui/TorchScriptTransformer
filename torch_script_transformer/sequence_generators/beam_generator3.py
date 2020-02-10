@@ -95,7 +95,6 @@ class BeamGenerator(torch.nn.Module):
         max_tgt_len = self.determine_max_tgt_len(src_len)
 
         # Forward encoder
-        encoder_padding_mask = torch
         encoder_out, encoder_padding_mask = \
             self.model.forward_encoder(src_tokens)
 
