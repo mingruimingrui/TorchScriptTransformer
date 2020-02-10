@@ -6,6 +6,7 @@ into memory all at once.
 from __future__ import unicode_literals
 
 import os
+import atexit
 import random
 import threading
 import multiprocessing
@@ -150,10 +151,17 @@ class LangPairDataset(object):
         for p in prefixes:
             src_filepath = '{}.{}'.format(p, src_lang)
             tgt_filepath = '{}.{}'.format(p, tgt_lang)
+
             assert os.path.isfile(src_filepath)
             assert os.path.isfile(tgt_filepath)
+
+            src_file_size = file_utils.get_file_size(src_filepath)
+            tgt_file_size = file_utils.get_file_size(tgt_filepath)
+
+            assert src_file_size == tgt_file_size
+
             filepaths.append((src_filepath, tgt_filepath))
-            file_sizes.append(file_utils.get_file_size(src_filepath))
+            file_sizes.append(src_file_size)
         self.filepaths = filepaths
         self.file_sizes = file_sizes
 
@@ -242,6 +250,13 @@ class LangPairDataset(object):
             chunk_queue_filler.setDaemon(True)
             chunk_queue_filler.start()
 
+            def graceful_shutdown():
+                """ Halts all sub-threads and sub-processes. """
+                coord.request_stop()
+                chunk_queue_filler.join()
+                for w in workers:
+                    w.join()
+
             # Use subprocesses to process chunks
             workers = []
             for _ in range(num_workers):
@@ -263,6 +278,8 @@ class LangPairDataset(object):
                 workers.append(w)
 
             if generate_infinitely:
+                atexit.register(graceful_shutdown)
+
                 while True:
                     batches = coordinated_get(coord, batch_queue)
                     for batch in batches:
@@ -274,8 +291,4 @@ class LangPairDataset(object):
                     for batch in batches:
                         yield batch
 
-            # Join all coords and subprocesses
-            coord.request_stop()
-            chunk_queue_filler.join()
-            for w in workers:
-                w.join()
+            graceful_shutdown()
